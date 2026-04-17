@@ -1,0 +1,142 @@
+# MetaSift dev stack
+#
+# Starts:
+#   - openmetadata-server (port 8585, UI + API + MCP at /mcp)
+#   - mysql (metadata store)
+#   - elasticsearch (search index)
+#   - openmetadata-ingestion (Airflow-based, for running ingestion workflows)
+#
+# Usage:
+#   docker compose up -d           # bring everything up
+#   docker compose logs -f server  # watch server startup
+#   docker compose down -v         # stop + wipe volumes
+#
+# OpenMetadata publishes an official compose file; this is a trimmed version.
+# Reference: https://docs.open-metadata.org/latest/deployment/docker
+
+name: metasift
+
+services:
+  mysql:
+    image: docker.getcollate.io/openmetadata/db:1.9.4
+    container_name: metasift-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ppassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks: [metasift-net]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.4
+    container_name: metasift-es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks: [metasift-net]
+
+  migrate:
+    image: docker.getcollate.io/openmetadata/server:1.9.4
+    container_name: metasift-migrate
+    command: "./bootstrap/openmetadata-ops.sh migrate"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+      DB_SCHEME: mysql
+      DB_USE_SSL: "false"
+      DB_USER: openmetadata_user
+      DB_USER_PASSWORD: openmetadata_password
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      OM_DATABASE: openmetadata_db
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_SCHEME: http
+    networks: [metasift-net]
+
+  openmetadata-server:
+    image: docker.getcollate.io/openmetadata/server:1.9.4
+    container_name: metasift-om-server
+    depends_on:
+      mysql:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8585:8585"
+      - "8586:8586"
+    environment:
+      OPENMETADATA_CLUSTER_NAME: metasift-local
+      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+      DB_SCHEME: mysql
+      DB_USE_SSL: "false"
+      DB_USER: openmetadata_user
+      DB_USER_PASSWORD: openmetadata_password
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      OM_DATABASE: openmetadata_db
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_SCHEME: http
+      SERVER_PORT: "8585"
+      SERVER_ADMIN_PORT: "8586"
+      AUTHENTICATION_PROVIDER: basic
+      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+      AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
+      AUTHORIZER_ADMIN_PRINCIPALS: "[admin]"
+      AUTHORIZER_PRINCIPAL_DOMAIN: openmetadata.org
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8586/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    networks: [metasift-net]
+
+  # MetaSift Streamlit app — commented out by default.
+  # Run locally with `uv run streamlit run app/main.py` while developing.
+  # Uncomment when you want to demo the full containerized stack.
+  #
+  # metasift:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: metasift-app
+  #   depends_on:
+  #     openmetadata-server:
+  #       condition: service_healthy
+  #   ports:
+  #     - "8501:8501"
+  #   env_file: .env
+  #   environment:
+  #     OPENMETADATA_HOST: http://openmetadata-server:8585
+  #     AI_SDK_HOST: http://openmetadata-server:8585
+  #   volumes:
+  #     - ./app:/app/app
+  #   networks: [metasift-net]
+
+networks:
+  metasift-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  es_data:
