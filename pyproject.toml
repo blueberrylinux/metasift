@@ -9,6 +9,8 @@ description = "AI-powered metadata analyst and steward for OpenMetadata"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 authors = [{ name = "Hero" }]
+license = { text = "MIT" }
+keywords = ["openmetadata", "metadata", "data-quality", "ai", "duckdb", "langchain"]
 dependencies = [
     # OpenMetadata integration
     "openmetadata-ingestion==1.12.4",
