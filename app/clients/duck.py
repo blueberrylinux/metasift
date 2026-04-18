@@ -1,4 +1,5 @@
 """DuckDB store — pulls metadata from OpenMetadata into in-process SQL tables."""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -37,13 +38,15 @@ def refresh_all() -> dict[str, int]:
     for t in tables:
         fqn = t.get("fullyQualifiedName")
         for col in t.get("columns", []):
-            col_rows.append({
-                "table_fqn": fqn,
-                "name": col.get("name"),
-                "dataType": col.get("dataType"),
-                "description": col.get("description"),
-                "tags": [tag.get("tagFQN") for tag in col.get("tags", [])],
-            })
+            col_rows.append(
+                {
+                    "table_fqn": fqn,
+                    "name": col.get("name"),
+                    "dataType": col.get("dataType"),
+                    "description": col.get("description"),
+                    "tags": [tag.get("tagFQN") for tag in col.get("tags", [])],
+                }
+            )
     cols_df = pd.DataFrame(col_rows)
     conn.execute("CREATE OR REPLACE TABLE om_columns AS SELECT * FROM cols_df")
     counts["om_columns"] = len(cols_df)
@@ -71,6 +74,10 @@ def _fetch_paginated(http, path: str, fields: str = "", limit: int = 100) -> lis
     return out
 
 
-def query(sql: str) -> pd.DataFrame:
-    """Run SQL against the loaded metadata tables."""
-    return get_conn().execute(sql).df()
+def query(sql: str, params: list | None = None) -> pd.DataFrame:
+    """Run SQL against the loaded metadata tables.
+
+    Pass `params` when the SQL includes `?` placeholders — use this for any
+    value that comes from the agent or user input to avoid injection.
+    """
+    return get_conn().execute(sql, params or []).df()

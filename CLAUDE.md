@@ -10,7 +10,7 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 
 1. **Analysis engine** (`app/engines/analysis.py`) — Pulls catalog metadata into DuckDB, runs aggregate SQL analytics, generates health dashboards. No LLM needed.
 
-2. **Stewardship engine** (`app/engines/stewardship.py`) — Auto-documents undocumented tables, detects/classifies PII, writes improvements back via REST API PATCH. Uses Gemini Flash for description generation.
+2. **Stewardship engine** (`app/engines/stewardship.py`) — Auto-documents undocumented tables, detects/classifies PII, writes improvements back via REST API PATCH. Uses Llama 3.3 70B via OpenRouter for description generation.
 
 3. **Cleaning engine** (`app/engines/cleaning.py`) — The differentiator. Detects stale descriptions, tag conflicts across schemas, scores description quality 1-5, finds inconsistent naming via fuzzy matching. Mix of DuckDB SQL and LLM calls.
 
@@ -24,8 +24,7 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 - openmetadata-ingestion SDK for REST API
 - data-ai-sdk[langchain] for MCP tool integration
 - LangChain for agent orchestration
-- Google Gemini (primary LLM, free tier via AI Studio) — model: gemini-2.5-flash
-- OpenRouter as fallback (Llama 3.3 70B, Qwen3, DeepSeek R1)
+- OpenRouter as the sole LLM provider (free tier) — default model: `meta-llama/llama-3.3-70b-instruct:free`
 - DuckDB for in-process analytical SQL on metadata
 - Streamlit for UI (dashboard left, chat right)
 - Plotly for charts via st.plotly_chart()
@@ -55,7 +54,9 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 
 ## LLM Model Routing
 
-All tasks currently default to gemini-2.5-flash. Per-task routing configured in .env:
+All tasks default to `meta-llama/llama-3.3-70b-instruct:free` via OpenRouter.
+Per-task routing configured in .env (swap per task if needed):
+
 - MODEL_TOOLCALL — agent tool-calling
 - MODEL_DESCRIPTION — generating table descriptions
 - MODEL_CLASSIFICATION — PII detection

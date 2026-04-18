@@ -102,8 +102,7 @@ graph TB
     end
 
     subgraph LLMs
-        GEM[Google AI Studio Free\nGemini 2.5 Flash]
-        OR[OpenRouter Free\nLlama 3.3 / Qwen3]
+        OR[OpenRouter Free\nLlama 3.3 70B Instruct]
     end
 
     subgraph Analytics
@@ -113,7 +112,6 @@ graph TB
     UI --> Agent
     Stew --> Agent
     Agent --> MR
-    MR --> GEM
     MR --> OR
     Agent --> AE
     Agent --> SE
@@ -156,7 +154,7 @@ MetaSift's headline metric — weighted combination:
 |-------|-----------|-----|
 | Metadata platform | OpenMetadata 1.9.4 | Hackathon sponsor, MCP server, 100+ connectors |
 | AI orchestration | LangChain + AI SDK | Official integration path for MCP to LLM tools |
-| LLM (free) | Google AI Studio + OpenRouter | $0 cost, model routing per task type |
+| LLM (free) | OpenRouter (Llama 3.3 70B Instruct) | $0 cost, strong tool-calling, per-task routing |
 | Analytics | DuckDB | In-process SQL on metadata, zero config |
 | Frontend | Streamlit | Rapid UI, native chat + charts |
 | Visualization | Plotly | Interactive charts in Streamlit |
@@ -169,8 +167,7 @@ MetaSift's headline metric — weighted combination:
 
 - Docker Desktop with **6+ GB RAM** and **4+ vCPUs** allocated
 - Python 3.11
-- A Google AI Studio API key (free at aistudio.google.com)
-- An OpenRouter API key (free at openrouter.ai) — optional fallback
+- An OpenRouter API key (free at [openrouter.ai/keys](https://openrouter.ai/keys))
 
 ### Setup
 
@@ -185,7 +182,7 @@ source .venv/bin/activate
 
 # Copy env template and fill in your keys
 cp .env.example .env
-# Edit .env — set GOOGLE_API_KEY and optionally OPENROUTER_API_KEY
+# Edit .env — set OPENROUTER_API_KEY
 
 # Start the OpenMetadata stack (takes ~2 min first boot)
 make stack-up
@@ -212,7 +209,7 @@ metasift/
 │   ├── main.py              # Streamlit entry point
 │   ├── config.py            # Settings from .env
 │   ├── clients/
-│   │   ├── llm.py           # LLM router (Gemini → OpenRouter fallback)
+│   │   ├── llm.py           # LLM client (OpenRouter, per-task model routing)
 │   │   ├── openmetadata.py  # SDK + REST wrapper
 │   │   └── duck.py          # DuckDB store (metadata as a dataset)
 │   └── engines/
@@ -263,7 +260,7 @@ MetaSift only sends structural metadata to external LLMs — column names, data 
 
 **`openmetadata-ingestion` install fails on Windows.** You're not on WSL. This project is designed for WSL 2 / Linux — the Windows install path has pydantic version issues.
 
-**Gemini rate limits.** Free tier is ~250 requests/day. For the cleaning engine on 50 tables that's plenty. If you hit limits, set OpenRouter fallback in `.env`.
+**OpenRouter rate limits.** Free-tier models have per-minute request limits that vary by model. If you hit them, switch to a different free model in `.env` (browse at [openrouter.ai/models?pricing=free](https://openrouter.ai/models?pricing=free)).
 
 **Port 8585 already in use.** Another OpenMetadata instance is running. `docker ps` to check, then `docker stop <id>`.
 

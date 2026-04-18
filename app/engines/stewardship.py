@@ -1,4 +1,5 @@
 """Stewardship engine — generates and writes metadata improvements."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

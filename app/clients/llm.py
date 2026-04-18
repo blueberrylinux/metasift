@@ -1,48 +1,29 @@
-"""LLM router — picks the right model per task type, with graceful fallback."""
+"""LLM client — picks the right OpenRouter model per task type."""
+
 from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
+from langchain_openai import ChatOpenAI
 
 from app.config import settings
 
-TaskType = Literal[
-    "toolcall", "description", "classification", "stale", "scoring", "reasoning"
-]
-
-
-def _gemini(model: str) -> BaseChatModel:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-
-    return ChatGoogleGenerativeAI(
-        model=model,
-        google_api_key=settings.google_api_key,
-        temperature=0.2,
-    )
-
-
-def _openrouter(model: str) -> BaseChatModel:
-    from langchain_openai import ChatOpenAI
-
-    return ChatOpenAI(
-        model=model,
-        base_url=settings.openrouter_base_url,
-        api_key=settings.openrouter_api_key,
-        temperature=0.2,
-    )
+TaskType = Literal["toolcall", "description", "classification", "stale", "scoring", "reasoning"]
 
 
 def _build(model_name: str) -> BaseChatModel:
-    """Pick provider by model prefix. Gemini if starts with 'gemini-', else OpenRouter."""
+    """Construct a ChatOpenAI client pointed at OpenRouter."""
     settings.require_llm_key()
-    if model_name.startswith("gemini") and settings.google_api_key:
-        return _gemini(model_name)
-    if settings.openrouter_api_key:
-        return _openrouter(model_name)
-    # Last resort: try Gemini even without prefix match
-    return _gemini(model_name)
+    return ChatOpenAI(
+        model=model_name,
+        base_url=settings.openrouter_base_url,
+        api_key=settings.openrouter_api_key,
+        temperature=0.2,
+        max_tokens=4096,  # headroom for JSON batch responses (e.g. scoring)
+        timeout=60,  # seconds — fail fast instead of hanging
+    )
 
 
 _TASK_MAP = {
@@ -61,5 +42,4 @@ def get_llm(task: TaskType = "toolcall") -> BaseChatModel:
 
     Cached so the same task reuses the same client.
     """
-    model_name = _TASK_MAP[task]()
-    return _build(model_name)
+    return _build(_TASK_MAP[task]())

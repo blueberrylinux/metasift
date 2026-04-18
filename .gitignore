@@ -13,6 +13,7 @@ uv.lock.bak
 .streamlit/secrets.toml
 .idea/
 .vscode/
+.claude/
 *.log
 CLAUDE.local.md
 DEVLOG.md

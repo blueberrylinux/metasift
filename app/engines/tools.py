@@ -1,0 +1,568 @@
+"""LangChain tools exposing MetaSift engines + DuckDB to the agent.
+
+These wrappers turn MetaSift's analysis, cleaning, and stewardship functions into
+tools the agent can call. Each @tool docstring is the signal the LLM uses to
+decide when to invoke it — keep them descriptive.
+
+Tools read from DuckDB (`om_tables`, `om_columns`) populated by
+`app.clients.duck.refresh_all()`. If DuckDB is empty, tools return a friendly
+hint telling the user to click "Refresh metadata".
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+from langchain_core.tools import tool
+from loguru import logger
+
+from app.clients import duck
+from app.engines import analysis, cleaning, stewardship
+
+_EMPTY_HINT = (
+    "No metadata loaded yet. Ask the user to click the "
+    "'🔄 Refresh metadata' button in the sidebar first."
+)
+
+
+def _has_data() -> bool:
+    try:
+        return bool(duck.query("SELECT COUNT(*) AS n FROM om_tables")["n"].iloc[0])
+    except Exception:
+        return False
+
+
+def _as_list(value) -> list:
+    """Coerce a DuckDB/pandas cell to a plain list.
+
+    List-typed columns come back as numpy arrays, and `arr or []` raises
+    a truth-value-ambiguous error. This handles None, arrays, and lists.
+    """
+    if value is None:
+        return []
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    return list(value) if value else []
+
+
+def _as_str(value, default: str = "") -> str:
+    """Coerce a DuckDB/pandas cell to a string, treating NaN/None as empty.
+
+    Needed because `nan or ""` returns nan (NaN is truthy in Python).
+    """
+    if value is None or pd.isna(value):
+        return default
+    return str(value)
+
+
+# ── Discovery tools ────────────────────────────────────────────────────────────
+
+
+@tool
+def list_schemas() -> str:
+    """List all databases and schemas in the catalog with table counts.
+
+    Use this when the user asks what's in their catalog, what schemas exist,
+    or wants an overview. Returns a markdown table.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = duck.query("""
+        SELECT
+            split_part(fullyQualifiedName, '.', 2) AS database,
+            split_part(fullyQualifiedName, '.', 3) AS schema,
+            COUNT(*) AS tables
+        FROM om_tables
+        GROUP BY database, schema
+        ORDER BY database, schema
+    """)
+    if df.empty:
+        return "No schemas found."
+    return df.to_markdown(index=False)
+
+
+@tool
+def list_tables(schema_name: str = "") -> str:
+    """List tables in the catalog, optionally filtered by schema name.
+
+    Pass an empty string for `schema_name` to list every table. Returns a
+    markdown table with fully qualified name, description length, and column count.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    pattern = f"%.{schema_name}.%" if schema_name else "%"
+    df = duck.query(
+        """
+        SELECT
+            fullyQualifiedName AS fqn,
+            COALESCE(length(description), 0) AS desc_length,
+            length(columns) AS column_count
+        FROM om_tables
+        WHERE fullyQualifiedName LIKE ?
+        ORDER BY fqn
+        LIMIT 50
+        """,
+        [pattern],
+    )
+    if df.empty:
+        return f"No tables found{' in schema ' + schema_name if schema_name else ''}."
+    return df.to_markdown(index=False)
+
+
+# ── Analysis tools ─────────────────────────────────────────────────────────────
+
+
+@tool
+def documentation_coverage() -> str:
+    """Compute documentation coverage (percent of tables with descriptions) per schema.
+
+    Use when the user asks about documentation, coverage, which schemas are
+    under-documented, or the overall state of docs. Returns a markdown table
+    sorted from worst to best coverage.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = analysis.documentation_coverage()
+    if df.empty:
+        return "No tables found."
+    return df.to_markdown(index=False)
+
+
+@tool
+def find_tag_conflicts() -> str:
+    """Find columns with the same name tagged differently across tables.
+
+    A tag conflict is when (e.g.) `email` is tagged `PII.Sensitive` in one table
+    but untagged in another, or tagged differently. Use when the user asks
+    about consistency, conflicts, or tag hygiene.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = analysis.tag_conflicts()
+    if df.empty:
+        return "No tag conflicts detected — tagging is consistent."
+    return df.to_markdown(index=False)
+
+
+@tool
+def composite_score() -> str:
+    """Compute MetaSift's composite metadata quality score (0-100).
+
+    Weighted combination of coverage (30%), accuracy (30%), consistency (20%),
+    and description quality (20%). Use when the user asks for the headline
+    number, the overall score, or the health of their catalog.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    s = analysis.composite_score()
+    return (
+        f"**Composite score: {s['composite']}%**\n\n"
+        f"- Documentation coverage: {s['coverage']}%\n"
+        f"- Accuracy (non-stale): {s['accuracy']}% *(needs cleaning engine run)*\n"
+        f"- Consistency (conflict-free): {s['consistency']}% *(needs conflict scan)*\n"
+        f"- Description quality: {s['quality']}% *(needs scoring run)*\n"
+    )
+
+
+# ── Cleaning tools ─────────────────────────────────────────────────────────────
+
+
+@tool
+def find_naming_inconsistencies(similarity_threshold: int = 75) -> str:
+    """Find clusters of similar column names that likely mean the same thing.
+
+    Uses fuzzy Levenshtein matching to detect naming drift like `customer_id`
+    vs `cust_id` vs `cid`. Higher threshold = stricter matches (default 75).
+    Use when the user asks about naming, consistency, or standardization.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    clusters = cleaning.detect_naming_clusters(similarity_threshold)
+    if not clusters:
+        return "No naming inconsistencies detected above the similarity threshold."
+    lines = [f"Found **{len(clusters)}** naming variant clusters:"]
+    for c in clusters[:10]:
+        lines.append(f"- **{c['canonical']}** ↔ {', '.join(c['variants'][1:])}")
+    return "\n".join(lines)
+
+
+@tool
+def check_description_staleness(fqn: str) -> str:
+    """Compare a table's stored description against its actual columns using an LLM.
+
+    Pass the EXACT fully-qualified name from the catalog (4 dot-separated parts:
+    service.database.schema.table). If you don't know the real FQN, call
+    `list_tables` first — do NOT guess or construct one from context.
+    Returns whether the description is stale, why, and a corrected draft.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = duck.query(
+        "SELECT description, columns FROM om_tables WHERE fullyQualifiedName = ?",
+        [fqn],
+    )
+    if df.empty:
+        return f"Table `{fqn}` not found. Try `list_tables` first."
+    current_desc = _as_str(df["description"].iloc[0])
+    columns = _as_list(df["columns"].iloc[0])
+    report = cleaning.detect_stale(fqn, current_desc, columns)
+    verdict = "🔴 STALE" if report.stale else "🟢 OK"
+    return (
+        f"**{verdict}** — confidence {report.confidence:.0%}\n\n"
+        f"- **Current:** {report.old or '_(empty)_'}\n"
+        f"- **Reason:** {report.reason}\n"
+        f"- **Suggested correction:** {report.corrected or '_(no change needed)_'}"
+    )
+
+
+@tool
+def score_descriptions(limit: int = 10) -> str:
+    """Score the quality of table descriptions (1-5) for the first N tables with descriptions.
+
+    1 = useless ('data table'), 5 = excellent (specific, complete, accurate).
+    Use when the user asks about description quality, or which docs are weak.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = duck.query(f"""
+        SELECT fullyQualifiedName AS fqn, description, columns
+        FROM om_tables
+        WHERE description IS NOT NULL AND length(description) > 0
+        LIMIT {max(1, min(limit, 25))}
+    """)
+    if df.empty:
+        return "No tables with descriptions found."
+    items = [
+        {
+            "fqn": row["fqn"],
+            "description": row["description"],
+            "columns": [c.get("name") for c in _as_list(row["columns"])],
+        }
+        for _, row in df.iterrows()
+    ]
+    results = cleaning.score_descriptions_batch(items)
+    if not results:
+        return "Scoring failed — LLM returned unparseable output."
+    lines = ["| Table | Score | Rationale |", "|---|---|---|"]
+    for r in results:
+        lines.append(f"| `{r['fqn']}` | {r['score']}/5 | {r['rationale']} |")
+    return "\n".join(lines)
+
+
+# ── About MetaSift (project guide) ─────────────────────────────────────────────
+
+_ABOUT_TOPICS = {
+    "overview": """**MetaSift** is an AI-powered metadata analyst and steward for OpenMetadata.
+
+The core thesis: _documentation coverage is a lie._ A catalog can be 100%
+documented and still full of **wrong, stale, and conflicting** metadata.
+MetaSift introduces a composite quality score that measures what actually matters.
+
+It sits on top of an OpenMetadata deployment, pulls catalog metadata via REST,
+analyzes it with four specialized engines, and writes improvements back.""",
+    "composite_score": """**Composite Quality Score** — MetaSift's headline metric (0-100).
+
+Weighted combination of four sub-metrics:
+
+| Component | Weight | What it measures |
+|---|---|---|
+| Documentation coverage | **30%** | % of tables with descriptions |
+| Description accuracy | **30%** | % of descriptions that aren't stale (per cleaning engine) |
+| Classification consistency | **20%** | % of columns without tag conflicts |
+| Description quality | **20%** | Mean 1-5 quality score normalized to 0-100 |
+
+Why this weighting: coverage is necessary but not sufficient. A catalog can be
+100% covered and still worthless if descriptions are wrong or tags conflict.
+Accuracy and coverage get equal weight because wrong docs hurt as much as missing docs.""",
+    "engines": """**The four engines:**
+
+1. **Analysis** (`app/engines/analysis.py`) — Pulls metadata into DuckDB and
+   runs aggregate SQL analytics (coverage, tag conflicts, composite score).
+   No LLM needed.
+
+2. **Stewardship** (`app/engines/stewardship.py`) — Auto-documents undocumented
+   tables, detects/classifies PII, writes improvements back via REST PATCH.
+   Uses Llama 3.3 70B.
+
+3. **Cleaning** (`app/engines/cleaning.py`) — The differentiator. Detects
+   stale descriptions (LLM compares description against actual columns),
+   finds tag conflicts across schemas, scores description quality 1-5,
+   surfaces naming inconsistencies via fuzzy matching.
+
+4. **Interface** (`app/engines/agent.py`) — That's me, Stew. LangChain agent
+   wired to 11 tools over the other engines. Chat in natural language.""",
+    "architecture": """**Stack:**
+
+- **OpenMetadata 1.9.4** — Docker Compose stack (MySQL + Elasticsearch + server)
+- **DuckDB** — in-process SQL on metadata (loaded via REST pagination)
+- **LangChain 1.x** — agent orchestration (new `create_agent` / LangGraph)
+- **OpenRouter (Llama 3.3 70B)** — the LLM
+- **Streamlit + Plotly** — dashboard + chat UI
+
+**Data flow:**
+
+OpenMetadata REST → DuckDB (in-memory) → engines → agent tools → chat reply.
+Write-backs go agent tool → REST PATCH → OpenMetadata.
+
+**Integration depth:** REST API for reads, JSON-Merge-Patch for writes,
+openmetadata-ingestion SDK for entity work. MCP endpoint is available but
+MetaSift uses local tools that expose its own engines directly.""",
+    "differentiators": """**What MetaSift adds over plain OpenMetadata:**
+
+- **Stale description detection** — LLM compares stored description against
+  actual columns. OpenMetadata can't do this natively.
+- **Tag conflict detection** — finds when `email` is tagged `PII.Sensitive`
+  in one table but untagged in another across schemas.
+- **Description quality scoring** — rates each description 1-5 on specificity,
+  accuracy, completeness. "Sales data" scores a 1; "Daily refund events with
+  per-order breakdown and reason codes" scores a 5.
+- **Fuzzy naming clusters** — surfaces inconsistencies like `customer_id` vs
+  `cust_id` vs `cid` using Levenshtein matching.
+- **Composite quality score** — weighted metric that penalizes *wrong* docs
+  as heavily as *missing* docs. OpenMetadata only reports coverage.
+- **Active stewardship** — auto-generates descriptions and writes them back,
+  not just passive analysis.""",
+    "setup": """**Setup steps** (~5 min):
+
+```bash
+make install      # create venv + install deps
+make stack-up     # start OpenMetadata Docker stack (~2 min first boot)
+# → open http://localhost:8585, log in admin/admin
+# → Settings → Bots → ingestion-bot → Generate new token
+# → paste into .env as OPENMETADATA_JWT_TOKEN and AI_SDK_TOKEN
+make seed         # populate demo catalog with sample metadata
+make run          # launch Streamlit app at http://localhost:8501
+```
+
+Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
+    "tech_stack": """**Tech stack:**
+
+- Python 3.11 on WSL Ubuntu 24.04
+- uv for package management
+- OpenMetadata 1.9.4
+- openmetadata-ingestion SDK
+- LangChain 1.x (unified `create_agent`)
+- OpenRouter (default: `meta-llama/llama-3.3-70b-instruct`)
+- DuckDB for in-process analytical SQL
+- Streamlit (dashboard + chat UI)
+- Plotly for charts
+- thefuzz for Levenshtein matching
+- Docker Compose for the OpenMetadata stack""",
+    "capabilities": """**Here's what I can actually do for you:**
+
+**Discovery**
+- See what databases and schemas exist in your catalog
+- List tables, optionally filtered to a specific schema
+
+**Quality analysis**
+- Measure documentation coverage per schema
+- Spot columns tagged inconsistently across tables (tag conflicts)
+- Compute the composite quality score (0-100)
+- Surface naming drift (`customer_id` vs `cust_id` vs `cid`)
+
+**Description cleaning**
+- Check whether a specific description is still accurate vs its columns
+- Rate description quality on a 1-5 scale
+
+**Active stewardship** _(writes to OpenMetadata)_
+- Draft a new description for an undocumented table
+- Apply an approved description back to the catalog
+
+**Miscellaneous**
+- Explain MetaSift itself (formula, engines, setup, architecture)
+- Run ad-hoc SQL against the in-memory metadata store
+
+Ask me naturally — no need to type function names. _"What schemas do I have?"_,
+_"Which tables have the worst documentation?"_, _"Find stale descriptions in sales"_
+all work.""",
+}
+
+
+@tool
+def about_metasift(topic: str = "overview") -> str:
+    """Answer questions about MetaSift itself OR about Stew's capabilities.
+    Use this whenever the user asks about MetaSift as a product, or about
+    what Stew (you) can actually do — not about their catalog data.
+
+    Trigger on natural-language questions like:
+    - "What is MetaSift?" / "tell me about metasift" / "what does this do"
+    - "How does the composite score work?" / "what's the formula"
+    - "What are the engines?" / "how does the cleaning engine work"
+    - "How is this different from OpenMetadata?" / "why not just use OM"
+    - "How do I set this up?" / "what do I install"
+    - "What's the architecture?" / "what's the tech stack"
+    - "What can you do?" / "what are your tools?" / "how can you help"
+    - "What are your capabilities?" / "what should I ask you"
+    - "Who built this?" (answer with project info, never reveal LLM)
+
+    IMPORTANT: for "what tools do you have" / "what can you do", pass
+    topic="capabilities" — this returns a human-readable list. Never try to
+    describe tools using JSON or function-call syntax in your reply.
+
+    Args:
+        topic: section to return. Options:
+            - "overview" (default)
+            - "capabilities" — list what you (Stew) can actually do
+            - "composite_score" — scoring formula details
+            - "engines" — the four internal engines (Analysis/Stewardship/
+              Cleaning/Interface). NOT the same as "tools".
+            - "architecture" — stack and data flow
+            - "differentiators" — what MetaSift adds over plain OpenMetadata
+            - "setup" — install steps
+            - "tech_stack" — libraries and versions
+        Unknown topics return the overview + list of valid topics.
+
+    Returns markdown text describing the requested topic.
+    """
+    key = (topic or "overview").strip().lower().replace(" ", "_").replace("-", "_")
+    if key in _ABOUT_TOPICS:
+        return _ABOUT_TOPICS[key]
+    valid = ", ".join(f"`{k}`" for k in _ABOUT_TOPICS)
+    return f"{_ABOUT_TOPICS['overview']}\n\n_Other topics I can expand on:_ {valid}"
+
+
+# ── Stewardship tools ──────────────────────────────────────────────────────────
+
+
+@tool
+def generate_description_for(fqn: str) -> str:
+    """Draft a business-friendly description for a table from its column metadata.
+
+    Returns the suggestion as text — does NOT write it back. Use when the user
+    asks to document a table, auto-describe it, or fill gaps.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = duck.query(
+        "SELECT columns FROM om_tables WHERE fullyQualifiedName = ?",
+        [fqn],
+    )
+    if df.empty:
+        return f"Table `{fqn}` not found."
+    columns = _as_list(df["columns"].iloc[0])
+    suggestion = stewardship.generate_description(fqn, columns)
+    return (
+        f"**Suggested description for `{fqn}`:**\n\n"
+        f"> {suggestion.new}\n\n"
+        f"_Confidence: {suggestion.confidence:.0%}. "
+        f"Ask the user to confirm before applying with `apply_description`._"
+    )
+
+
+@tool
+def apply_description(fqn: str, description: str) -> str:
+    """Write a description back to OpenMetadata via REST PATCH.
+
+    Only call this AFTER the user has explicitly approved the text. The `fqn`
+    MUST be a real fully-qualified name that exists in the catalog — use
+    `list_tables` first if you're not certain. Never guess or construct an FQN.
+    """
+    from app.engines.stewardship import Suggestion
+
+    # Validate FQN exists before attempting the PATCH — prevents 404s from
+    # hallucinated service/database names.
+    if not _has_data():
+        return (
+            "Can't verify the FQN because metadata isn't loaded. "
+            "Ask the user to click '🔄 Refresh metadata' first."
+        )
+    check = duck.query(
+        "SELECT 1 FROM om_tables WHERE fullyQualifiedName = ?",
+        [fqn],
+    )
+    if check.empty:
+        sample = duck.query("SELECT fullyQualifiedName AS fqn FROM om_tables ORDER BY fqn LIMIT 8")[
+            "fqn"
+        ].tolist()
+        return (
+            f"Table `{fqn}` doesn't exist in the catalog. "
+            f"Use `list_tables` to find the real FQN. A few valid examples:\n"
+            + "\n".join(f"- `{f}`" for f in sample)
+        )
+
+    s = Suggestion(
+        fqn=fqn,
+        field="description",
+        old=None,
+        new=description,
+        confidence=1.0,
+        reasoning="User-approved",
+    )
+    if stewardship.apply_suggestion(s):
+        return f"✔ Description applied to `{fqn}`."
+    return f"✖ Failed to apply description to `{fqn}` — check logs."
+
+
+# ── Escape hatch ───────────────────────────────────────────────────────────────
+
+
+@tool
+def run_sql(query: str) -> str:
+    """Run arbitrary read-only SQL against the DuckDB metadata store.
+
+    Available tables:
+      - `om_tables` (fullyQualifiedName, description, columns, tags, owners, profile)
+      - `om_columns` (table_fqn, name, dataType, description, tags)
+
+    Use for ad-hoc questions not covered by the other tools. Read-only —
+    do NOT use for INSERT/UPDATE/DELETE. Returns up to 50 rows as a markdown table.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    lowered = query.lower().strip()
+    if any(kw in lowered for kw in ("insert ", "update ", "delete ", "drop ", "create ", "alter ")):
+        return "Refused: run_sql is read-only."
+    try:
+        df = duck.query(query)
+    except Exception as e:
+        return f"SQL error: {e}"
+    if df.empty:
+        return "Query returned no rows."
+    return df.head(50).to_markdown(index=False)
+
+
+# ── Registry ───────────────────────────────────────────────────────────────────
+
+ALL_TOOLS = [
+    list_schemas,
+    list_tables,
+    documentation_coverage,
+    find_tag_conflicts,
+    composite_score,
+    find_naming_inconsistencies,
+    check_description_staleness,
+    score_descriptions,
+    about_metasift,
+    generate_description_for,
+    apply_description,
+    run_sql,
+]
+
+
+def _wrap_for_safety(t):
+    """One-time wrap: convert tool exceptions into text error messages so the
+    agent can recover and try a different approach instead of crashing."""
+    if getattr(t, "_wrapped_for_safety", False):
+        return t
+    original = t.func
+    name = t.name
+
+    def safe(*args, _orig=original, _name=name, **kwargs):
+        try:
+            return _orig(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"Tool '{_name}' errored: {e}")
+            return (
+                f"Tool '{_name}' failed with error: {e}. "
+                "Try a different approach or report this to the user."
+            )
+
+    t.func = safe
+    t._wrapped_for_safety = True
+    return t
+
+
+def get_tools() -> list:
+    """Return all MetaSift tools. Imported by the agent builder."""
+    wrapped = [_wrap_for_safety(t) for t in ALL_TOOLS]
+    logger.info(f"Loaded {len(wrapped)} local MetaSift tools (errors non-fatal).")
+    return wrapped

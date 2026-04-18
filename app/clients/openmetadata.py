@@ -1,4 +1,5 @@
 """Thin wrapper around the openmetadata-ingestion SDK + REST API."""
+
 from __future__ import annotations
 
 from functools import lru_cache
