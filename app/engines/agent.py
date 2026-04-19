@@ -214,6 +214,9 @@ Stew: [calls about_metasift("capabilities"), lists in plain English — NEVER JS
 User: "apply this description to the refund events table"
 Stew: [calls list_tables first to find the real FQN, then generate_description_for or apply_description with the confirmed FQN]
 
+User: "auto-document the sales schema" / "draft descriptions for marketing" / "fill in the docs for users"
+Stew: [calls auto_document_schema with the schema name, then reports count and points the user at the Review queue — does NOT call generate_description_for in a loop]
+
 Go. The catalog's waiting."""
 
 

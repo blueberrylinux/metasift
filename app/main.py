@@ -230,6 +230,34 @@ def _build_review_queue() -> list[dict]:
     except Exception:
         pass  # table doesn't exist yet (no deep scan run)
 
+    # Auto-drafted descriptions for undocumented tables. Join against om_tables
+    # so drafts for tables that have since been documented (through any path)
+    # drop out automatically.
+    try:
+        drafts = duck.query("""
+            SELECT d.fqn, d.suggested, d.confidence, d.reasoning
+            FROM doc_suggestions d
+            JOIN om_tables t ON t.fullyQualifiedName = d.fqn
+            WHERE (t.description IS NULL OR length(t.description) = 0)
+              AND d.suggested IS NOT NULL
+              AND length(d.suggested) > 0
+            ORDER BY d.fqn
+        """)
+        for _, r in drafts.iterrows():
+            items.append(
+                {
+                    "kind": "description",
+                    "key": f"doc::{r['fqn']}",
+                    "fqn": r["fqn"],
+                    "old": "",
+                    "new": r["suggested"] or "",
+                    "confidence": float(r["confidence"] or 0.0),
+                    "reason": r["reasoning"] or "auto-drafted for undocumented table",
+                }
+            )
+    except Exception:
+        pass  # doc_suggestions not yet populated
+
     # PII tag gaps
     try:
         gaps = duck.query("""
@@ -304,8 +332,14 @@ def _render_review_card(item: dict) -> None:
 
     with st.container(border=True):
         if item["kind"] == "description":
+            # Auto-drafts for undocumented tables use the `doc::` key prefix;
+            # stale rewrites use `desc::`. Different icon/label per case.
+            is_draft = key.startswith("doc::")
+            header_icon = "✏️" if is_draft else "🧹"
+            header_label = "New description" if is_draft else "Stale description"
             st.markdown(
-                f"**🧹 Stale description** · `{item['fqn']}` · confidence {item['confidence']:.0%}"
+                f"**{header_icon} {header_label}** · `{item['fqn']}` · "
+                f"confidence {item['confidence']:.0%}"
             )
             if item["reason"]:
                 st.caption(f"_Why:_ {item['reason']}")

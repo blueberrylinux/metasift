@@ -365,6 +365,7 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
 
 **Active stewardship** _(writes to OpenMetadata)_
 - Draft a new description for an undocumented table
+- Auto-document an entire schema in one pass — drafts go to the review queue
 - Apply an approved description back to the catalog
 
 **Miscellaneous**
@@ -445,6 +446,42 @@ def generate_description_for(fqn: str) -> str:
         f"> {suggestion.new}\n\n"
         f"_Confidence: {suggestion.confidence:.0%}. "
         f"Ask the user to confirm before applying with `apply_description`._"
+    )
+
+
+@tool
+def auto_document_schema(schema_name: str) -> str:
+    """Draft descriptions for EVERY undocumented table in a schema at once.
+
+    Use this when the user asks to document a whole schema or fill every gap
+    in one go — e.g. _"auto-document the sales schema"_, _"draft descriptions
+    for marketing"_, _"fill in the missing docs in users"_.
+
+    Runs one LLM call per undocumented table (capped at 20) and persists the
+    drafts to the review queue — nothing is written to OpenMetadata until the
+    user clicks Accept on each. Returns a summary with counts.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    schema_name = (schema_name or "").strip()
+    if not schema_name:
+        return "Tell me which schema to document. Try `list_schemas` first if you're not sure."
+    summary = stewardship.bulk_document_schema(schema_name)
+    if summary.get("error"):
+        return f"Couldn't auto-document `{schema_name}`: {summary['error']}"
+    if summary["total"] == 0:
+        return (
+            f"Schema `{schema_name}` has no undocumented tables — every table "
+            f"already has a description. Nothing to draft."
+        )
+    tail = ""
+    if summary["failed"]:
+        tail = f" ({summary['failed']} failed — likely LLM timeouts)"
+    return (
+        f"✏️ Drafted **{summary['drafted']}** description(s) for schema "
+        f"`{summary['schema']}`{tail}.\n\n"
+        f"_Review and approve each one in the **📋 Review queue** in the sidebar. "
+        f"Nothing was written to OpenMetadata yet._"
     )
 
 
@@ -654,6 +691,7 @@ ALL_TOOLS = [
     score_descriptions,
     about_metasift,
     generate_description_for,
+    auto_document_schema,
     apply_description,
     scan_pii,
     find_pii_gaps,
