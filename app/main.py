@@ -236,6 +236,26 @@ with st.sidebar:
                 progress.empty()
                 st.error(f"Deep scan failed: {e}")
 
+    if st.button(
+        "🔐 PII scan",
+        use_container_width=True,
+        help="Heuristic classification of all columns (fast — no LLM calls)",
+    ):
+        if not om_ok:
+            st.error("Start OpenMetadata first: `make stack-up`")
+        else:
+            try:
+                with st.spinner("Scanning columns for PII…"):
+                    summary = cleaning.run_pii_scan()
+                st.success(
+                    f"{summary['scanned']} columns · "
+                    f"{summary['sensitive']} sensitive · "
+                    f"{summary['nonsensitive']} non-sensitive · "
+                    f"**{summary['gaps']} gap(s)**"
+                )
+            except Exception as e:
+                st.error(f"PII scan failed: {e}")
+
     # Subtle status row at the bottom of the sidebar
     st.divider()
     s1, s2 = st.columns(2)

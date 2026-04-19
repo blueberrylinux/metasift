@@ -54,3 +54,23 @@ def apply_suggestion(s: Suggestion) -> bool:
     except Exception as e:
         logger.error(f"Apply failed for {s.fqn}: {e}")
         return False
+
+
+def apply_pii_tag(table_fqn: str, column_name: str, tag_fqn: str) -> dict:
+    """Apply a PII classification tag to a column via REST PATCH.
+
+    Returns {"ok": bool, "status": str, "message": str}.
+    """
+    try:
+        result = openmetadata.patch_column_tag(table_fqn, column_name, tag_fqn)
+        return {
+            "ok": True,
+            "status": result.get("status", "applied"),
+            "message": f"{result.get('status', 'applied')}: {column_name} -> {tag_fqn}",
+        }
+    except ValueError as e:
+        logger.error(f"Column lookup failed for {table_fqn}.{column_name}: {e}")
+        return {"ok": False, "status": "column_not_found", "message": str(e)}
+    except Exception as e:
+        logger.error(f"apply_pii_tag failed for {table_fqn}.{column_name}: {e}")
+        return {"ok": False, "status": "error", "message": str(e)}

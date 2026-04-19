@@ -66,3 +66,56 @@ def patch_table_description(fqn: str, description: str) -> dict[str, Any]:
     )
     r.raise_for_status()
     return r.json()
+
+
+def patch_column_tag(table_fqn: str, column_name: str, tag_fqn: str) -> dict[str, Any]:
+    """Add a PII (or other classification) tag to a specific column.
+
+    Fetches the table's current columns to locate the column's array index,
+    then applies a JSON Patch that REPLACES the column's tags array with
+    existing-tags + the new tag. Non-destructive to other tags already set.
+
+    Raises ValueError if the column isn't found.
+    Raises httpx.HTTPStatusError if the PATCH fails.
+    """
+    client = get_http()
+
+    # Step 1 — fetch current table with columns to find the column index
+    r = client.get(f"/v1/tables/name/{table_fqn}", params={"fields": "columns,tags"})
+    r.raise_for_status()
+    table = r.json()
+
+    columns = table.get("columns") or []
+    col_idx = next(
+        (i for i, c in enumerate(columns) if c.get("name") == column_name),
+        None,
+    )
+    if col_idx is None:
+        raise ValueError(
+            f"Column '{column_name}' not found in table '{table_fqn}'. "
+            f"Available: {[c.get('name') for c in columns]}"
+        )
+
+    # Step 2 — compose new tag list, skip if already present
+    existing = columns[col_idx].get("tags") or []
+    if any(t.get("tagFQN") == tag_fqn for t in existing):
+        return {"status": "already_tagged", "tag": tag_fqn, "column": column_name}
+
+    new_tags = existing + [
+        {
+            "tagFQN": tag_fqn,
+            "labelType": "Manual",
+            "state": "Confirmed",
+            "source": "Classification",
+        }
+    ]
+
+    # Step 3 — PATCH the column's tags array at its index
+    patch = [{"op": "replace", "path": f"/columns/{col_idx}/tags", "value": new_tags}]
+    r = client.patch(
+        f"/v1/tables/name/{table_fqn}",
+        headers={"Content-Type": "application/json-patch+json"},
+        json=patch,
+    )
+    r.raise_for_status()
+    return {"status": "applied", "tag": tag_fqn, "column": column_name}

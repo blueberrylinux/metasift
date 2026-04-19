@@ -492,6 +492,127 @@ def apply_description(fqn: str, description: str) -> str:
     return f"✖ Failed to apply description to `{fqn}` — check logs."
 
 
+# ── PII tools ──────────────────────────────────────────────────────────────────
+
+
+@tool
+def scan_pii() -> str:
+    """Scan every column in the catalog for PII sensitivity and store the results.
+
+    Uses a heuristic rule set (no LLM) to classify columns as `PII.Sensitive`,
+    `PII.NonSensitive`, or non-PII. Stores results in the `pii_results` table
+    so follow-up queries like `find_pii_gaps` are fast.
+
+    Use this when the user asks to:
+    - "Scan for PII", "find PII", "classify sensitive columns"
+    - "What sensitive data do I have?", "check PII coverage"
+    - "Audit tags", "find untagged PII"
+
+    Returns a summary: scanned, sensitive count, non-sensitive count, and gaps
+    (columns where the suggested tag differs from the current tag).
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    summary = cleaning.run_pii_scan()
+    if summary["scanned"] == 0:
+        return "No columns found to scan. Refresh metadata first."
+    return (
+        f"**PII scan complete** — {summary['scanned']} columns analyzed.\n\n"
+        f"- 🔴 **Sensitive:** {summary['sensitive']} columns\n"
+        f"- 🟡 **Non-sensitive person identifiers:** {summary['nonsensitive']} columns\n"
+        f"- ⚠️ **Gaps** (missing or wrong tag): {summary['gaps']} columns\n\n"
+        f"_Call `find_pii_gaps` to see which specific columns need attention._"
+    )
+
+
+@tool
+def find_pii_gaps(min_confidence: float = 0.8) -> str:
+    """List columns where the heuristic suggests a PII tag different from the current tag.
+
+    Requires `scan_pii` to have been run first (reads from the `pii_results` table).
+    Filters to gaps at or above the given confidence threshold (default 0.8 —
+    high-confidence suggestions only). Lower the threshold to see more.
+
+    Use this when the user asks:
+    - "Show me the PII gaps", "what's untagged?"
+    - "Which columns should I tag?", "what PII is missing a tag?"
+
+    Returns a markdown table with column, table, suggested tag, confidence, and reason.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    try:
+        df = duck.query(
+            """
+            SELECT column_name, table_fqn, current_tag, suggested_tag, confidence, reason
+            FROM pii_results
+            WHERE suggested_tag IS NOT NULL
+              AND (current_tag IS NULL OR current_tag != suggested_tag)
+              AND confidence >= ?
+            ORDER BY
+              CASE WHEN suggested_tag = 'PII.Sensitive' THEN 0 ELSE 1 END,
+              confidence DESC
+            """,
+            [float(min_confidence)],
+        )
+    except Exception:
+        return "No PII scan results yet. Run `scan_pii` first, then ask again."
+    if df.empty:
+        return (
+            f"No PII gaps found above confidence {min_confidence:.2f}. "
+            f"Either everything's tagged correctly, or no scan has been run."
+        )
+    lines = [f"**Found {len(df)} PII gap(s)** (confidence ≥ {min_confidence:.2f}):", ""]
+    lines.append("| Column | Table | Suggested tag | Confidence | Current | Reason |")
+    lines.append("|---|---|---|---|---|---|")
+    for _, r in df.iterrows():
+        current = r["current_tag"] if r["current_tag"] else "_(none)_"
+        schema_table = ".".join(r["table_fqn"].split(".")[-2:])
+        lines.append(
+            f"| `{r['column_name']}` | `{schema_table}` | **{r['suggested_tag']}** | "
+            f"{r['confidence']:.2f} | {current} | {r['reason']} |"
+        )
+    lines.append("")
+    lines.append(
+        "_To apply: ask the user to confirm, then call `apply_pii_tag(table_fqn, column_name, tag)`._"
+    )
+    return "\n".join(lines)
+
+
+@tool
+def apply_pii_tag(table_fqn: str, column_name: str, tag_fqn: str) -> str:
+    """Apply a PII classification tag to a specific column in OpenMetadata.
+
+    Writes to the catalog via REST PATCH. Non-destructive: if the column
+    already has other tags, those are preserved; the new tag is added.
+
+    REQUIRES user approval before calling. The FQN and column name must be
+    real — use `list_tables` or `find_pii_gaps` to find them first.
+
+    Valid `tag_fqn` values: `PII.Sensitive`, `PII.NonSensitive`, `PII.None`.
+
+    Returns success/error message.
+    """
+    # Validate the FQN exists in our catalog cache to catch hallucination early.
+    if not _has_data():
+        return (
+            "Can't verify the FQN because metadata isn't loaded. "
+            "Ask the user to click '🔄 Refresh metadata' first."
+        )
+    check = duck.query(
+        "SELECT 1 FROM om_columns WHERE table_fqn = ? AND name = ?",
+        [table_fqn, column_name],
+    )
+    if check.empty:
+        return (
+            f"Column `{column_name}` not found in table `{table_fqn}`. "
+            f"Call `find_pii_gaps` or `list_tables` to find real FQN + column names."
+        )
+    result = stewardship.apply_pii_tag(table_fqn, column_name, tag_fqn)
+    icon = "✔" if result["ok"] else "✖"
+    return f"{icon} {result['message']}"
+
+
 # ── Escape hatch ───────────────────────────────────────────────────────────────
 
 
@@ -534,6 +655,9 @@ ALL_TOOLS = [
     about_metasift,
     generate_description_for,
     apply_description,
+    scan_pii,
+    find_pii_gaps,
+    apply_pii_tag,
     run_sql,
 ]
 

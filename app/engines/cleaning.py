@@ -6,6 +6,7 @@ Detects stale descriptions, tag conflicts, inconsistent naming, and low-quality 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 from loguru import logger
@@ -250,3 +251,335 @@ def run_deep_scan(progress_cb=None) -> dict[str, float | int]:
         "accuracy_pct": accuracy,
         "quality_avg_1_5": quality_avg,
     }
+
+
+# ── PII detection ──────────────────────────────────────────────────────────────
+#
+# Heuristic-first classifier. Applies four safety layers in order:
+#   1. Exclusion list — columns that look like PII but aren't (product_name,
+#      ip_address, email_template, etc.). Short-circuits any PII match.
+#   2. Ordered rule matches — specific patterns first (exact names, strong
+#      signals), fuzzy patterns second.
+#   3. Table-context de-weighting — tables about products/catalogs/events
+#      reduce confidence of name-based PII matches.
+#   4. Confidence tier — low-confidence matches (<0.8) are flagged
+#      needs_review=True so the agent knows not to auto-apply.
+#
+# LLM fallback is optional and only runs for columns with no heuristic match.
+# Even 0.99-confidence matches only SUGGEST a tag — applying is a separate step.
+
+# Exclusions — checked FIRST. These patterns catch names that superficially
+# look like PII but aren't (product_name, ip_address, email_template, etc.).
+_PII_EXCLUSIONS: list[str] = [
+    # Product / catalog / event attributes (not person names)
+    r"^(product|brand|company|organization|org|file|database|host|server|service|team|group|role|app|event|channel|region|country|city|state|category|tag|topic|feature|page|post|comment)_?name$",
+    r"^(device|file|service|api|function|class|method|module|package|library|framework|schema|table|column|field|index)_name$",
+    # Network / tech "addresses" (not physical home addresses)
+    r"^ip_?address$|^mac_?address$|^wallet_?address$|^contract_?address$|^eth_?address$|^btc_?address$|^blockchain_?address$",
+    # Email-adjacent non-PII
+    r"^email_(template|subject|body|count|type|status|id|domain|provider|category)$",
+    # Phone-adjacent non-PII
+    r"^phone_(type|kind|brand|model|os|version|count)$",
+    # Generic metadata fields
+    r".*_(type|kind|category|model|status|state|flag|enum|template|format|count|price|total|sum|avg|min|max|sku|score|rank|position|order|version|revision)$",
+    # Obvious identifiers that aren't personal
+    r"^(order|invoice|transaction|payment|shipment|refund|subscription|session|request|page|post|comment|like|share|view|event)_id$",
+    r"^(product|sku|catalog|variant|item|listing|inventory)_id$",
+]
+
+# PII rules in priority order. First match wins. Format:
+#   (regex, suggested_tag, base_confidence, reason)
+_PII_RULES: list[tuple[str, str, float, str]] = [
+    # ── PII.Sensitive — HIGH confidence (exact / strong patterns) ─────────
+    (r"^email$", "PII.Sensitive", 0.98, "direct email field"),
+    (r"^(phone|mobile|telephone|cellphone|cell)(_?number)?$", "PII.Sensitive", 0.96, "phone field"),
+    (
+        r"^ssn$|^social_?security(_?number)?$|^tax_?id$|^tin$",
+        "PII.Sensitive",
+        0.99,
+        "SSN / tax identifier",
+    ),
+    (
+        r"^(first|last|middle|full|given|family|sur|maiden|preferred)_?name$",
+        "PII.Sensitive",
+        0.94,
+        "person name",
+    ),
+    (
+        r"^(date_of_birth|birthdate|birthday|birth_date|dob)$",
+        "PII.Sensitive",
+        0.96,
+        "date of birth",
+    ),
+    (
+        r"^(street_)?address$|^home_address$|^mailing_address$|^billing_address$|^shipping_address$|^address_line_?\d*$",
+        "PII.Sensitive",
+        0.92,
+        "physical address",
+    ),
+    (
+        r"^zip(_?code)?$|^postal_?code$|^postcode$|^pin_?code$",
+        "PII.Sensitive",
+        0.82,
+        "postal code (quasi-identifier)",
+    ),
+    (
+        r"^credit_card.*|^cc_number$|^card_num(ber)?$|^debit_card.*|^pan$",
+        "PII.Sensitive",
+        0.97,
+        "payment card number",
+    ),
+    (
+        r"^cvv$|^cvc$|^card_cvv$|^card_security_code$",
+        "PII.Sensitive",
+        0.99,
+        "card verification code",
+    ),
+    (
+        r"^passport(_?number)?$|^drivers?_?license(_?number)?$|^license_?number$|^national_?id$|^government_?id$",
+        "PII.Sensitive",
+        0.96,
+        "government-issued ID",
+    ),
+    (
+        r"^iban$|^account_number$|^bank_account.*|^routing_number$|^swift_?code$",
+        "PII.Sensitive",
+        0.94,
+        "bank account info",
+    ),
+    (
+        r"^password$|^pwd$|^passwd$|^api_?key$|^secret$|^access_token$|^refresh_token$|^auth_token$",
+        "PII.Sensitive",
+        0.98,
+        "credential / secret",
+    ),
+    (
+        r"^latitude$|^longitude$|^lat$|^lng$|^lon$|^geo_location$|^gps_location$|^precise_location$",
+        "PII.Sensitive",
+        0.82,
+        "precise location",
+    ),
+    (
+        r"^medical_?record(_?number)?$|^mrn$|^patient_?id$|^health_?insurance.*|^diagnosis.*|^prescription.*",
+        "PII.Sensitive",
+        0.96,
+        "protected health info",
+    ),
+    (
+        r"^race$|^ethnicity$|^religion$|^sexual_?orientation$|^gender_?identity$",
+        "PII.Sensitive",
+        0.93,
+        "sensitive demographic",
+    ),
+    # ── PII.Sensitive — MEDIUM confidence (fuzzy) ─────────────────────────
+    (r".*_email$|^email_.*", "PII.Sensitive", 0.82, "email-like"),
+    (r".*_phone$|^phone_.*|.*_mobile$|^mobile_.*", "PII.Sensitive", 0.80, "phone-like"),
+    (r".*_address$|^address_.*", "PII.Sensitive", 0.72, "address-like"),
+    (r".*_name$", "PII.Sensitive", 0.68, "ends in '_name' — possibly person name"),
+    # ── PII.NonSensitive — person-linked identifiers ──────────────────────
+    (
+        r"^(customer|user|account|member|client|patient|employee|contact|subscriber|buyer|seller)_id$",
+        "PII.NonSensitive",
+        0.92,
+        "opaque person identifier",
+    ),
+    (
+        r"^cust_id$|^cid$|^uid$|^usr_id$|^pat_id$|^mem_id$",
+        "PII.NonSensitive",
+        0.84,
+        "abbreviated person identifier",
+    ),
+    (
+        r"^(customer|user|account|member|patient|employee)_(code|key|number|ref|reference|uuid|guid)$",
+        "PII.NonSensitive",
+        0.88,
+        "person reference",
+    ),
+]
+
+# Table contexts that de-weight name-based PII matches. If the table's FQN
+# contains any of these, we reduce match confidence — `products.name` is
+# probably a product name, not a person's name.
+_TABLE_CONTEXT_NON_PERSON = re.compile(
+    r"\.("
+    r"products?|inventory|catalogs?|brands?|events?|logs?|metrics?|files?|resources?|"
+    r"databases?|apps?|servers?|services?|assets?|tags?|categories|features?|"
+    r"pages?|posts?|comments?|reviews?|sessions?|audits?|workflows?|pipelines?|"
+    r"models?|experiments?|ingestions?"
+    r")\.",
+    re.IGNORECASE,
+)
+
+
+def _normalize_col_name(name: str) -> str:
+    """Normalize a column name for rule matching.
+
+    - Converts camelCase / PascalCase to snake_case so `CustomerID` matches
+      the same rules as `customer_id`.
+    - Lowercases the result.
+    """
+    if not name:
+        return ""
+    # Insert underscore between lower/digit and following uppercase (camelCase).
+    s1 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    # Insert underscore between uppercase and uppercase-then-lowercase
+    # (handles consecutive-capitals like "XMLParser" -> "XML_Parser").
+    s2 = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s1)
+    return s2.strip().lower()
+
+
+def _pii_match(column_name: str, table_fqn: str) -> dict:
+    """Classify a column's PII sensitivity using the heuristic rule set.
+
+    Returns a dict with:
+        suggested_tag: str | None  — PII.Sensitive / PII.NonSensitive / None
+        confidence:    float       — 0.0-1.0
+        reason:        str
+        source:        str         — "heuristic" / "heuristic_exclusion" / "none"
+        needs_review:  bool        — True when confidence < 0.80
+    """
+    name = _normalize_col_name(column_name)
+    if not name:
+        return {
+            "suggested_tag": None,
+            "confidence": 0.0,
+            "reason": "empty column name",
+            "source": "none",
+            "needs_review": False,
+        }
+
+    # Layer 1: exclusions
+    for pat in _PII_EXCLUSIONS:
+        if re.fullmatch(pat, name):
+            return {
+                "suggested_tag": None,
+                "confidence": 0.0,
+                "reason": "matched exclusion pattern (non-PII despite name)",
+                "source": "heuristic_exclusion",
+                "needs_review": False,
+            }
+
+    # Layer 2: ordered rule matching
+    for pattern, tag, base_conf, reason in _PII_RULES:
+        if re.fullmatch(pattern, name):
+            confidence = base_conf
+
+            # Layer 3: table-context de-weighting
+            if _TABLE_CONTEXT_NON_PERSON.search(table_fqn or ""):
+                confidence = round(max(0.0, confidence - 0.25), 2)
+                reason = f"{reason} — de-weighted (non-person table context)"
+
+            return {
+                "suggested_tag": tag,
+                "confidence": round(confidence, 2),
+                "reason": reason,
+                "source": "heuristic",
+                "needs_review": confidence < 0.80,
+            }
+
+    # No heuristic match
+    return {
+        "suggested_tag": None,
+        "confidence": 0.0,
+        "reason": "no heuristic rule matched",
+        "source": "none",
+        "needs_review": False,
+    }
+
+
+def _as_list_local(value) -> list:
+    """Local copy of the list-coercion helper — avoids cross-module import."""
+    if value is None:
+        return []
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    return list(value) if value else []
+
+
+def run_pii_scan(use_llm_fallback: bool = False) -> dict[str, int]:
+    """Scan every column, classify PII, persist results to `pii_results` table.
+
+    Args:
+        use_llm_fallback: If True, run LLM classification on columns that
+            have no heuristic match AND a meaningful (non-generic) name.
+            Default False (heuristic-only — fast, free, deterministic).
+
+    Returns:
+        Summary dict: scanned, sensitive, nonsensitive, gaps (columns where
+        suggested tag differs from current).
+    """
+    cols = duck.query("SELECT table_fqn, name, dataType, tags FROM om_columns")
+    if cols.empty:
+        return {"scanned": 0, "sensitive": 0, "nonsensitive": 0, "gaps": 0}
+
+    conn = duck.get_conn()
+    conn.execute("""
+        CREATE OR REPLACE TABLE pii_results (
+            table_fqn VARCHAR,
+            column_name VARCHAR,
+            data_type VARCHAR,
+            current_tag VARCHAR,
+            suggested_tag VARCHAR,
+            confidence DOUBLE,
+            reason VARCHAR,
+            source VARCHAR,
+            needs_review BOOLEAN
+        )
+    """)
+
+    counts = {"scanned": 0, "sensitive": 0, "nonsensitive": 0, "gaps": 0}
+
+    for _, row in cols.iterrows():
+        current_tags = _as_list_local(row["tags"])
+        # Normalise to just the first PII-ish tag for the "current" column.
+        current_tag = None
+        for t in current_tags:
+            if isinstance(t, str) and t.startswith("PII."):
+                current_tag = t
+                break
+        if current_tag is None and current_tags:
+            current_tag = current_tags[0] if isinstance(current_tags[0], str) else None
+
+        result = _pii_match(row["name"], row["table_fqn"])
+
+        # Layer 4: LLM fallback (opt-in, only for no-match columns)
+        if (
+            use_llm_fallback
+            and result["suggested_tag"] is None
+            and result["source"] == "none"
+            and row["name"]
+            and len(row["name"]) >= 3
+        ):
+            # Placeholder hook — LLM fallback is a stretch extension.
+            # Keep it disabled-by-default so the feature stays deterministic.
+            pass
+
+        conn.execute(
+            "INSERT INTO pii_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                row["table_fqn"],
+                row["name"],
+                (row.get("dataType") or "") if hasattr(row, "get") else (row["dataType"] or ""),
+                current_tag,
+                result["suggested_tag"],
+                result["confidence"],
+                result["reason"],
+                result["source"],
+                result["needs_review"],
+            ],
+        )
+
+        counts["scanned"] += 1
+        if result["suggested_tag"] == "PII.Sensitive":
+            counts["sensitive"] += 1
+        elif result["suggested_tag"] == "PII.NonSensitive":
+            counts["nonsensitive"] += 1
+        if result["suggested_tag"] and current_tag != result["suggested_tag"]:
+            counts["gaps"] += 1
+
+    logger.info(
+        f"PII scan done — {counts['scanned']} columns scanned, "
+        f"{counts['sensitive']} sensitive, {counts['nonsensitive']} non-sensitive, "
+        f"{counts['gaps']} gaps (missing tag)"
+    )
+    return counts
