@@ -368,6 +368,11 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
 - Auto-document an entire schema in one pass — drafts go to the review queue
 - Apply an approved description back to the catalog
 
+**Deeper OpenMetadata queries** _(via MCP)_
+- Keyword search across the catalog (entities, business terms)
+- Pull full entity details for any table/column
+- Trace lineage — upstream and downstream dependencies
+
 **Miscellaneous**
 - Explain MetaSift itself (formula, engines, setup, architecture)
 - Run ad-hoc SQL against the in-memory metadata store

@@ -1,8 +1,12 @@
-"""Interface layer — LangChain agent wired to local MetaSift tools.
+"""Interface layer — LangChain agent wired to local MetaSift tools + MCP.
 
-The agent uses tools defined in `app.engines.tools` that wrap MetaSift's
-analysis, cleaning, and stewardship engines. MCP tools can be appended later
-as a drop-in extension to `_load_tools()`.
+Two tool channels:
+  1. Local tools (`app.engines.tools`) — wrap MetaSift's analysis, cleaning,
+     and stewardship engines. The differentiators live here.
+  2. OpenMetadata MCP tools — supplementary read-only catalog discovery
+     (search, entity details, lineage). Loaded via `ai_sdk.AISdk.mcp`.
+     MCP write operations (`patch_entity`, glossary creation) are excluded
+     so write-backs stay gated through MetaSift's review queue.
 
 Built on LangChain 1.x `create_agent` (LangGraph under the hood). Invoke with
 `{"messages": [HumanMessage(...)]}`; response is in the final message.
@@ -13,7 +17,17 @@ from __future__ import annotations
 from loguru import logger
 
 from app.clients.llm import get_llm
+from app.config import settings
 from app.engines.tools import get_tools
+
+# Allowlist of MCP tool names exposed to the agent. Deliberately narrow —
+# writes (`patch_entity`, `create_glossary*`) are excluded so the review queue
+# stays the only write surface. Extend cautiously.
+_MCP_TOOL_ALLOWLIST = {
+    "search_metadata",
+    "get_entity_details",
+    "get_entity_lineage",
+}
 
 SYSTEM_PROMPT = """You are Stew — the metadata wizard who lives inside MetaSift.
 
@@ -39,6 +53,17 @@ specifics from memory; fetch them.
 - NEVER describe tools by pasting their JSON signatures into your reply.
   Explain what you can do in plain English, or fetch the capabilities list
   via the tool above.
+
+### Local vs MCP tools
+- Most of your tools are **local** — they read from the DuckDB cache and
+  run MetaSift's engines (fast, no network round-trip per call).
+- You also have **MCP tools** that talk straight to OpenMetadata:
+  `search_metadata` (catalog-wide keyword search across entities),
+  `get_entity_details` (pull a single entity's full state), and
+  `get_entity_lineage` (upstream/downstream dependencies). Reach for these
+  for lineage questions ("what depends on X?") or freeform catalog search.
+- Writes stay local — MCP is read-only in MetaSift. For any change to
+  OpenMetadata, use the stewardship tools so the user approves first.
 
 ### Real FQNs only — never invent them
 When you need to reference a specific table (for `check_description_staleness`,
@@ -233,9 +258,39 @@ def build_agent():
     return create_agent(model=llm, tools=tools, system_prompt=SYSTEM_PROMPT)
 
 
+def _load_mcp_tools() -> list:
+    """Load OpenMetadata MCP tools via ai_sdk, filtered to the allowlist.
+
+    Returns an empty list on any failure (unreachable server, bad token,
+    SDK error) — the agent still works with local tools. Errors are logged
+    but not raised, so MCP availability never breaks agent construction.
+    """
+    if not settings.ai_sdk_token:
+        logger.info("MCP tools skipped — AI_SDK_TOKEN not set.")
+        return []
+    try:
+        from ai_sdk import AISdk
+
+        sdk = AISdk(host=settings.ai_sdk_host, token=settings.ai_sdk_token)
+        all_mcp = sdk.mcp.as_langchain_tools()
+        filtered = [t for t in all_mcp if t.name in _MCP_TOOL_ALLOWLIST]
+        logger.info(
+            f"MCP tools loaded: {len(filtered)}/{len(all_mcp)} "
+            f"(allowlist: {sorted(_MCP_TOOL_ALLOWLIST)})"
+        )
+        return filtered
+    except Exception as e:
+        logger.warning(f"MCP tools unavailable — falling back to local only. Reason: {e}")
+        return []
+
+
 def _load_tools() -> list:
-    """Collect tools for the agent. Local tools now, MCP tools later."""
-    tools = get_tools()
-    # TODO: append MCP tools here once we wire ai_sdk.integrations.langchain
-    logger.info(f"Agent will load with {len(tools)} tool(s).")
+    """Collect tools for the agent — local MetaSift tools plus any MCP tools."""
+    local_tools = get_tools()
+    mcp_tools = _load_mcp_tools()
+    tools = local_tools + mcp_tools
+    logger.info(
+        f"Agent will load with {len(tools)} tool(s) "
+        f"({len(local_tools)} local + {len(mcp_tools)} MCP)."
+    )
     return tools
