@@ -509,12 +509,21 @@ def ownership_report() -> str:
 
 @tool
 def impact_check(fqn: str) -> str:
-    """Compute the blast radius (downstream impact) of a specific table.
+    """BLAST RADIUS — weighted downstream impact analysis for a single table.
 
-    Use when the user asks _"what breaks if I change X?"_, _"show me the impact
-    of X"_, _"which tables are most critical"_, or _"blast radius for X"_.
-    Returns direct dependents, full transitive downstream count, how many of
-    those are PII-sensitive, and a weighted impact score.
+    ★ PREFER THIS TOOL for any "blast radius", "impact", "criticality",
+      "what breaks if I change X", "ripple effect", "downstream footprint",
+      "weighted impact", or "how important is X" question. ★
+
+    Unlike `get_entity_lineage` (which only returns the lineage subgraph),
+    this tool computes real impact analytics on top of lineage:
+      - Direct dependents (depth-1)
+      - Full transitive downstream count (recursive closure)
+      - PII.Sensitive downstream count (cross-references column tags)
+      - Weighted impact score: direct×1 + transitive_only×0.5 + pii×2
+
+    Use `get_entity_lineage` ONLY when the user explicitly wants to see the
+    graph / subgraph / edges / nodes — not for impact/blast-radius questions.
 
     Pass the FULL 4-part FQN — e.g. `metasift_demo_db.analytics.users.customer_profiles`.
     If you don't know it, call `list_tables` or `search_metadata` first.
