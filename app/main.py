@@ -7,7 +7,9 @@ Run: `uv run streamlit run app/main.py`
 from __future__ import annotations
 
 import base64
+import contextlib
 import html
+import json
 import re
 from pathlib import Path
 
@@ -18,7 +20,10 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from app.clients import duck, openmetadata
 from app.config import settings
 from app.engines import agent as agent_mod
-from app.engines import analysis, cleaning
+from app.engines import analysis, cleaning, stewardship
+from app.engines.stewardship import Suggestion
+
+_PII_TAG_OPTIONS = ["PII.Sensitive", "PII.NonSensitive", "PII.None"]
 
 LOGO_PATH = Path(__file__).parent / "assets" / "logo.png"
 PAGE_ICON = str(LOGO_PATH) if LOGO_PATH.exists() else "🧹"
@@ -63,10 +68,46 @@ def _render_user(text: str) -> None:
     )
 
 
-def _render_assistant(text: str) -> None:
+_TRACE_RESULT_LIMIT = 2500
+
+
+def _render_traces(traces: list[dict], key_prefix: str) -> None:
+    """Render an expander listing the tool calls Stew made for this reply.
+
+    Makes the agent's work inspectable: what tool, with what args, and the
+    raw result. Long results are truncated to keep the UI tidy.
+    """
+    if not traces:
+        return
+    label = f"🔍 Show your work · {len(traces)} step{'s' if len(traces) != 1 else ''}"
+    with st.expander(label, expanded=False):
+        for i, t in enumerate(traces, start=1):
+            st.markdown(f"**Step {i} — `{t['tool']}`**")
+            args = t.get("args") or {}
+            if args:
+                st.code(json.dumps(args, indent=2, default=str), language="json")
+            result = t.get("result") or ""
+            if isinstance(result, list):
+                result = "\n".join(
+                    p.get("text", "") if isinstance(p, dict) else str(p) for p in result
+                )
+            result = str(result)
+            truncated = len(result) > _TRACE_RESULT_LIMIT
+            body = result[:_TRACE_RESULT_LIMIT] + ("…" if truncated else "")
+            st.markdown(body or "_(empty result)_")
+            if truncated:
+                st.caption(f"_Truncated — full result was {len(result):,} chars._")
+            if i < len(traces):
+                st.divider()
+
+
+def _render_assistant(text: str, traces: list[dict] | None = None) -> None:
     """Render an assistant message Claude-style: no avatar, no bubble, just
-    text flowing left-aligned. A small bottom spacer gives breathing room."""
+    text flowing left-aligned. Optionally follows with a 'show your work'
+    expander listing the tool calls that produced this reply."""
     st.markdown(text)
+    if traces:
+        _render_traces(traces, key_prefix=str(id(text)))
     st.markdown("<div style='height: 0.6rem'></div>", unsafe_allow_html=True)
 
 
@@ -138,6 +179,254 @@ if st.session_state.pop("stop_requested", False):
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         st.session_state.messages.append({"role": "assistant", "content": "_⏹ Stopped._"})
     st.session_state.pop("pending_prompt", None)
+
+
+# ── Review queue ───────────────────────────────────────────────────────────
+# Pending suggestions from the cleaning engine (stale descriptions, stored in
+# `cleaning_results`) and the PII engine (gaps between current and suggested
+# tags, stored in `pii_results`). Rendered as a card list with per-row
+# Accept / Edit / Reject buttons. Rejections are session-scoped — a fresh scan
+# rebuilds the queue from scratch.
+
+
+def _build_review_queue() -> list[dict]:
+    """Collect pending suggestions from cleaning_results + pii_results.
+
+    Returns a list of dicts, each with a stable `key`, the suggestion `kind`
+    (`description` or `pii_tag`), target FQN/column, old and new values, and
+    confidence + reason for display.
+    """
+    items: list[dict] = []
+
+    # Stale descriptions
+    try:
+        stale = duck.query("""
+            SELECT
+                c.fqn,
+                c.stale_reason,
+                c.stale_confidence,
+                c.stale_corrected,
+                t.description AS current_description
+            FROM cleaning_results c
+            LEFT JOIN om_tables t ON t.fullyQualifiedName = c.fqn
+            WHERE c.stale = TRUE
+              AND c.stale_corrected IS NOT NULL
+              AND length(c.stale_corrected) > 0
+            ORDER BY c.stale_confidence DESC
+        """)
+        for _, r in stale.iterrows():
+            items.append(
+                {
+                    "kind": "description",
+                    "key": f"desc::{r['fqn']}",
+                    "fqn": r["fqn"],
+                    "old": r["current_description"] or "",
+                    "new": r["stale_corrected"] or "",
+                    "confidence": float(r["stale_confidence"] or 0.0),
+                    "reason": r["stale_reason"] or "",
+                }
+            )
+    except Exception:
+        pass  # table doesn't exist yet (no deep scan run)
+
+    # PII tag gaps
+    try:
+        gaps = duck.query("""
+            SELECT table_fqn, column_name, current_tag, suggested_tag, confidence, reason
+            FROM pii_results
+            WHERE suggested_tag IS NOT NULL
+              AND (current_tag IS NULL OR current_tag != suggested_tag)
+            ORDER BY
+                CASE WHEN suggested_tag = 'PII.Sensitive' THEN 0 ELSE 1 END,
+                confidence DESC
+        """)
+        for _, r in gaps.iterrows():
+            items.append(
+                {
+                    "kind": "pii_tag",
+                    "key": f"pii::{r['table_fqn']}::{r['column_name']}",
+                    "fqn": r["table_fqn"],
+                    "column": r["column_name"],
+                    "old": r["current_tag"],
+                    "new": r["suggested_tag"],
+                    "confidence": float(r["confidence"] or 0.0),
+                    "reason": r["reason"] or "",
+                }
+            )
+    except Exception:
+        pass  # table doesn't exist yet (no PII scan run)
+
+    dismissed = st.session_state.get("review_dismissed", set())
+    return [i for i in items if i["key"] not in dismissed]
+
+
+def _dismiss(key: str) -> None:
+    st.session_state.setdefault("review_dismissed", set()).add(key)
+    st.session_state.pop(f"review_edit::{key}", None)
+
+
+def _accept_description(item: dict, text: str) -> None:
+    s = Suggestion(
+        fqn=item["fqn"],
+        field="description",
+        old=item["old"],
+        new=text.strip(),
+        confidence=1.0,
+        reasoning="User-approved via review queue",
+    )
+    if stewardship.apply_suggestion(s):
+        _dismiss(item["key"])
+        with contextlib.suppress(Exception):
+            duck.refresh_all()
+        st.toast(f"Description applied to {item['fqn'].split('.')[-1]}", icon="✅")
+        st.rerun()
+    else:
+        st.error(f"Failed to apply description to `{item['fqn']}` — check logs.")
+
+
+def _accept_pii_tag(item: dict, tag: str) -> None:
+    result = stewardship.apply_pii_tag(item["fqn"], item["column"], tag)
+    if result["ok"]:
+        _dismiss(item["key"])
+        with contextlib.suppress(Exception):
+            duck.refresh_all()
+        st.toast(f"Tagged {item['column']} → {tag}", icon="✅")
+        st.rerun()
+    else:
+        st.error(f"Failed: {result['message']}")
+
+
+def _render_review_card(item: dict) -> None:
+    key = item["key"]
+    edit_key = f"review_edit::{key}"
+    editing = st.session_state.get(edit_key, False)
+
+    with st.container(border=True):
+        if item["kind"] == "description":
+            st.markdown(
+                f"**🧹 Stale description** · `{item['fqn']}` · confidence {item['confidence']:.0%}"
+            )
+            if item["reason"]:
+                st.caption(f"_Why:_ {item['reason']}")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.caption("**Current**")
+                st.markdown(
+                    f"> {item['old'] or '_(empty)_'}",
+                )
+            with c2:
+                st.caption("**Suggested**")
+                if editing:
+                    st.text_area(
+                        "Edit suggested description",
+                        value=item["new"],
+                        key=f"review_text::{key}",
+                        label_visibility="collapsed",
+                        height=120,
+                    )
+                else:
+                    st.markdown(f"> {item['new']}")
+        else:
+            current_label = item["old"] if item["old"] else "_(untagged)_"
+            st.markdown(
+                f"**🔐 PII tag gap** · `{item['fqn']}` · "
+                f"column `{item['column']}` · confidence {item['confidence']:.0%}"
+            )
+            if item["reason"]:
+                st.caption(f"_Why:_ {item['reason']}")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.caption("**Current tag**")
+                st.markdown(current_label)
+            with c2:
+                st.caption("**Suggested tag**")
+                if editing:
+                    default_idx = (
+                        _PII_TAG_OPTIONS.index(item["new"])
+                        if item["new"] in _PII_TAG_OPTIONS
+                        else 0
+                    )
+                    st.selectbox(
+                        "Edit suggested tag",
+                        _PII_TAG_OPTIONS,
+                        index=default_idx,
+                        key=f"review_tag::{key}",
+                        label_visibility="collapsed",
+                    )
+                else:
+                    st.markdown(f"**{item['new']}**")
+
+        b1, b2, b3, _ = st.columns([1, 1, 1, 2])
+        if editing:
+            if b1.button("💾 Save & apply", key=f"review_save::{key}", type="primary"):
+                if item["kind"] == "description":
+                    edited = st.session_state.get(f"review_text::{key}", item["new"])
+                    _accept_description(item, edited)
+                else:
+                    edited = st.session_state.get(f"review_tag::{key}", item["new"])
+                    _accept_pii_tag(item, edited)
+            if b2.button("Cancel", key=f"review_cancel::{key}"):
+                st.session_state.pop(edit_key, None)
+                st.rerun()
+        else:
+            if b1.button("✔ Accept", key=f"review_accept::{key}", type="primary"):
+                if item["kind"] == "description":
+                    _accept_description(item, item["new"])
+                else:
+                    _accept_pii_tag(item, item["new"])
+            if b2.button("✎ Edit", key=f"review_editbtn::{key}"):
+                st.session_state[edit_key] = True
+                st.rerun()
+            if b3.button("✖ Reject", key=f"review_reject::{key}"):
+                _dismiss(key)
+                st.toast("Suggestion dismissed", icon="🗑️")
+                st.rerun()
+
+
+def _render_review_panel() -> None:
+    top_l, top_r = st.columns([5, 1])
+    with top_l:
+        st.markdown("## 📋 Review queue")
+        st.caption(
+            "Pending suggestions from the cleaning and PII engines. "
+            "Accept applies the change via REST PATCH; Edit lets you tweak first; "
+            "Reject dismisses until the next scan."
+        )
+    with top_r:
+        if st.button("← Back to chat", use_container_width=True, key="review_back"):
+            st.session_state.show_review = False
+            st.rerun()
+
+    items = _build_review_queue()
+    if not items:
+        st.info(
+            "No pending suggestions. Run **🔬 Deep scan** or **🔐 PII scan** "
+            "from the sidebar to populate the queue."
+        )
+        return
+
+    kinds = {"description": 0, "pii_tag": 0}
+    for i in items:
+        kinds[i["kind"]] = kinds.get(i["kind"], 0) + 1
+
+    filter_opt = st.radio(
+        "Filter",
+        [
+            f"All ({len(items)})",
+            f"Descriptions ({kinds['description']})",
+            f"PII tags ({kinds['pii_tag']})",
+        ],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="review_filter",
+    )
+    if filter_opt.startswith("Descriptions"):
+        items = [i for i in items if i["kind"] == "description"]
+    elif filter_opt.startswith("PII tags"):
+        items = [i for i in items if i["kind"] == "pii_tag"]
+
+    for item in items:
+        _render_review_card(item)
 
 
 # ── Sidebar ────────────────────────────────────────────────────────────────
@@ -256,6 +545,22 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"PII scan failed: {e}")
 
+    st.divider()
+
+    # Review queue toggle. The label carries the pending count so users don't
+    # need to open the panel to know whether anything's waiting.
+    pending = len(_build_review_queue())
+    review_label = f"📋 Review queue ({pending})" if pending else "📋 Review queue"
+    in_review = bool(st.session_state.get("show_review"))
+    if st.button(
+        "← Back to chat" if in_review else review_label,
+        use_container_width=True,
+        type="primary" if pending and not in_review else "secondary",
+        help="Approve or reject suggestions from the cleaning and PII engines",
+    ):
+        st.session_state.show_review = not in_review
+        st.rerun()
+
     # Subtle status row at the bottom of the sidebar
     st.divider()
     s1, s2 = st.columns(2)
@@ -264,6 +569,13 @@ with st.sidebar:
 
 
 # ── Main area ──────────────────────────────────────────────────────────────
+# When the review-queue toggle is on, the main area shows the approvals panel
+# instead of the welcome / chat view. Chat state is preserved — toggling back
+# returns the user to their conversation exactly as they left it.
+if st.session_state.get("show_review"):
+    _render_review_panel()
+    st.stop()
+
 # Pending prompts come from suggestion-chip clicks; they short-circuit the
 # normal chat_input flow on the next rerun.
 pending_prompt = st.session_state.pop("pending_prompt", None)
@@ -294,7 +606,7 @@ else:
         if msg["role"] == "user":
             _render_user(msg["content"])
         else:
-            _render_assistant(msg["content"])
+            _render_assistant(msg["content"], msg.get("traces"))
 
 # Small stop button — sits right above the chat input, right-aligned.
 # Visible only once a conversation has started (nothing to stop on welcome).
@@ -336,6 +648,11 @@ if user_input:
 
     last_tool_content: str | None = None
     final_reply: str | None = None
+    # Tool calls stream in as AIMessage.tool_calls (one AIMessage can request
+    # several at once); results stream back as ToolMessage with matching
+    # tool_call_id. Keep insertion order so the expander reads top-to-bottom.
+    tool_calls_by_id: dict[str, dict] = {}
+    tool_results_by_id: dict[str, str | list] = {}
     try:
         with st.spinner("Stew is thinking…"):
             for chunk in st.session_state.agent.stream(
@@ -347,11 +664,22 @@ if user_input:
                     if not isinstance(node_data, dict):
                         continue
                     for m in node_data.get("messages", []):
-                        if isinstance(m, ToolMessage) and m.content:
-                            last_tool_content = (
-                                m.content if isinstance(m.content, str) else str(m.content)
-                            )
+                        if isinstance(m, ToolMessage):
+                            tc_id = getattr(m, "tool_call_id", None)
+                            if tc_id:
+                                tool_results_by_id[tc_id] = m.content
+                            if m.content:
+                                last_tool_content = (
+                                    m.content if isinstance(m.content, str) else str(m.content)
+                                )
                         elif isinstance(m, AIMessage):
+                            for tc in getattr(m, "tool_calls", None) or []:
+                                tc_id = tc.get("id") or f"_anon_{len(tool_calls_by_id)}"
+                                if tc_id not in tool_calls_by_id:
+                                    tool_calls_by_id[tc_id] = {
+                                        "name": tc.get("name", "unknown"),
+                                        "args": tc.get("args", {}),
+                                    }
                             text = _extract_text(m.content)
                             tool_calls = getattr(m, "tool_calls", None) or []
                             if text and not tool_calls:
@@ -375,8 +703,17 @@ if user_input:
         else:
             reply = f"⚠️ Something went wrong: `{e}`"
 
-    _render_assistant(reply)
-    st.session_state.messages.append({"role": "assistant", "content": reply})
+    traces = [
+        {
+            "tool": info["name"],
+            "args": info["args"],
+            "result": tool_results_by_id.get(tc_id, ""),
+        }
+        for tc_id, info in tool_calls_by_id.items()
+    ]
+
+    _render_assistant(reply, traces)
+    st.session_state.messages.append({"role": "assistant", "content": reply, "traces": traces})
 
     # If the message came from a suggestion chip, re-render to swap the
     # welcome hero for the chat view cleanly.

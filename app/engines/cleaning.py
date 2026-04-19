@@ -188,6 +188,7 @@ def run_deep_scan(progress_cb=None) -> dict[str, float | int]:
             stale BOOLEAN,
             stale_reason VARCHAR,
             stale_confidence DOUBLE,
+            stale_corrected VARCHAR,
             quality_score INTEGER,
             quality_rationale VARCHAR
         )
@@ -223,8 +224,16 @@ def run_deep_scan(progress_cb=None) -> dict[str, float | int]:
     for fqn, report in stale_map.items():
         q_score, q_reason = quality_map.get(fqn, (0, ""))
         conn.execute(
-            "INSERT INTO cleaning_results VALUES (?, ?, ?, ?, ?, ?)",
-            [fqn, report.stale, report.reason, report.confidence, q_score, q_reason],
+            "INSERT INTO cleaning_results VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                fqn,
+                report.stale,
+                report.reason,
+                report.confidence,
+                report.corrected,
+                q_score,
+                q_reason,
+            ],
         )
     # Tables where stale detection succeeded but quality didn't get added need
     # insertion too; and vice versa. Above covers stale-succeeded path. Let's
@@ -232,8 +241,8 @@ def run_deep_scan(progress_cb=None) -> dict[str, float | int]:
     for fqn, (q_score, q_reason) in quality_map.items():
         if fqn not in stale_map:
             conn.execute(
-                "INSERT INTO cleaning_results VALUES (?, ?, ?, ?, ?, ?)",
-                [fqn, None, None, None, q_score, q_reason],
+                "INSERT INTO cleaning_results VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [fqn, None, None, None, None, q_score, q_reason],
             )
 
     analyzed = len(stale_map)
