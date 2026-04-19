@@ -14,15 +14,17 @@ Existing tools generate new metadata (auto-documentation) or keep metadata fresh
 
 ## The solution
 
-MetaSift is built on top of OpenMetadata and provides four integrated engines:
+MetaSift sits on top of OpenMetadata and adds four integrated engines plus a rich interaction surface:
 
-**Analysis** — Treats your metadata catalog as a dataset. Pulls all metadata into DuckDB, runs aggregate analytics, and generates a health dashboard with a composite quality score that goes beyond simple coverage metrics.
+**Analysis** — Treats the catalog as a dataset. Pulls metadata into DuckDB, runs aggregate analytics, and computes a **composite quality score** weighted across coverage, accuracy, consistency, and description quality. Also computes blast-radius (downstream impact) and per-team stewardship breakdowns.
 
-**Cleaning** — The differentiator. Detects stale descriptions that no longer match table contents, finds classification conflicts across schemas, scores description quality 1-5, and identifies naming inconsistencies. No other tool does this.
+**Cleaning** — The quality-audit differentiator. Detects stale descriptions that no longer match column metadata, finds classification conflicts across schemas, scores descriptions 1-5, clusters similar-but-different column names via fuzzy matching, and heuristically classifies PII columns with a 5-layer rule set (zero LLM cost).
 
-**Stewardship** — Auto-documents undocumented tables using LLM-generated descriptions with lineage and profiler context. Detects and classifies PII columns. All changes go through a human-in-the-loop review workflow.
+**Stewardship** — Writes the fixes back. Auto-documents undocumented tables (one at a time or a whole schema at once via NL), applies PII tags, and manages ownership. Every change flows through a **review queue** with Accept / Edit / Reject — no silent writes.
 
-**Stew** — An AI wizard persona that guides users through natural language. Ask questions, trigger actions, and get explanations — all in one chat interface with "show your work" transparency.
+**Stew** — The AI wizard. LangChain agent with 18 local tools plus 3 allowlisted MCP tools for catalog search and lineage. Every reply carries a "Show your work" expander with the tool calls and raw results. The agent can't write directly — writes always go through the review queue.
+
+On top of that: a 7-tab **interactive visualization panel** (composite gauge, lineage DAG, blast-radius bars, stewardship leaderboard, catalog treemap, tag-conflict heatmap, quality histogram), and a downloadable **executive markdown report** summarizing every finding for stakeholders.
 
 ## Demo
 
@@ -30,17 +32,34 @@ MetaSift is built on top of OpenMetadata and provides four integrated engines:
 
 ## Features
 
-- **Health dashboard** — Documentation coverage, quality score, PII %, ownership % by schema
-- **NL metadata queries** — "Which schemas have the worst documentation?"
-- **Auto-documentation** — Generate descriptions for undocumented tables using column/lineage context
-- **PII detection** — LLM-based classification with confidence scores
-- **Stale description detection** — Find descriptions that don't match actual table contents
-- **Conflicting classification detector** — Same column tagged differently across tables
-- **Description quality scoring** — Rate descriptions 1-5 on specificity and accuracy
-- **Inconsistent naming detector** — Cluster similar column names across schemas
-- **Review workflow** — Accept/edit/reject all AI suggestions before write-back
-- **"Show your work"** — Every AI response shows the tools called and evidence used
-- **One-command Docker setup** — `docker compose up -d` and ready in 5 minutes
+### Quality analysis
+
+- **Composite quality score** — Weighted health metric (30% coverage + 30% accuracy + 20% consistency + 20% quality)
+- **Documentation coverage** by schema
+- **Stale description detection** — LLM compares stored descriptions against actual column metadata
+- **Description quality scoring** — Rate descriptions 1-5 on specificity, accuracy, completeness
+- **Classification conflicts** — Same column tagged differently across tables
+- **Naming inconsistency clusters** — `customer_id` vs `cust_id` vs `cid` via fuzzy matching
+
+### Stewardship & automation
+
+- **Heuristic PII detection** — 5-layer classifier (exclusions + ordered rules + table-context + confidence tiers), zero LLM cost
+- **Auto-documentation** — Generate descriptions for undocumented tables from column context
+- **Bulk NL stewardship** — "Auto-document the sales schema" drafts descriptions for every undocumented table at once
+- **Human-gated write-back** — Accept / Edit / Reject per suggestion; REST PATCH only after approval
+
+### Impact & accountability
+
+- **Blast radius / impact analysis** — Direct + transitive downstream count per table, weighted by PII.Sensitive footprint
+- **Stewardship leaderboard** — Per-team scorecard (tables owned, coverage %, quality, PII footprint)
+- **Orphan detection** — Surface tables with no owner
+
+### Interactive exploration
+
+- **Stew** (AI wizard) — Natural-language chat over all of the above; MCP + local tool channels
+- **"Show your work"** — Every AI response carries a collapsible expander with the tools called + results
+- **7-tab visualization panel** — Composite gauge, lineage DAG, blast radius bars, stewardship leaderboard, catalog treemap, tag conflicts heatmap, quality histogram
+- **Executive report export** — Downloadable markdown summary (composite score, stale descriptions, tag conflicts, PII gaps, naming drift)
 
 ## What makes MetaSift different
 
@@ -50,17 +69,19 @@ These capabilities don't exist in OpenMetadata, Collate, or any other catalog to
 - Composite metadata quality score (accuracy + consistency + quality, not just coverage)
 - Conflicting classification detection across schemas
 - Inconsistent naming detection and standardization
+- Blast-radius / downstream-impact scoring weighted by PII sensitivity
+- Per-team stewardship leaderboard + orphan-table detection
 - DuckDB-powered aggregate metadata analytics
 
 ### Feature comparison
 
 | Feature | OpenMetadata OSS | Collate (paid) | MetaSift |
 |---------|:---:|:---:|:---:|
-| PII auto-classification | ✅ (batch, spaCy) | ✅ (AI-powered) | ✅ (on-demand, LLM, NL-triggered) |
-| Auto-documentation | ❌ | ✅ | ✅ |
+| PII auto-classification | ✅ (batch, spaCy) | ✅ (AI-powered) | ✅ (on-demand, heuristic, zero-LLM) |
+| Auto-documentation | ❌ | ✅ | ✅ (single + bulk via NL) |
 | NL chat interface | ❌ | ✅ (AskCollate) | ✅ (Stew) |
-| Auto-generated charts | ❌ | ✅ | ✅ |
-| Lineage exploration | ✅ (UI only) | ✅ | ✅ (+ blast radius scoring) |
+| Auto-generated charts | ❌ | ✅ | ✅ (7-tab plotly panel) |
+| Lineage exploration | ✅ (UI only) | ✅ | ✅ (chat-driven, full DAG viz) |
 | Data Insights / health metrics | ✅ (coverage, ownership) | ✅ | ✅ (+ composite quality score) |
 | Review workflow for AI changes | ❌ | ✅ | ✅ |
 | **Stale description detection** | ❌ | ❌ | **✅ MetaSift only** |
@@ -68,6 +89,8 @@ These capabilities don't exist in OpenMetadata, Collate, or any other catalog to
 | **Conflicting classification detector** | ❌ | ❌ | **✅ MetaSift only** |
 | **Inconsistent naming detector** | ❌ | ❌ | **✅ MetaSift only** |
 | **Composite metadata quality score** | ❌ | ❌ | **✅ MetaSift only** |
+| **Blast-radius impact analysis** | ❌ | ❌ | **✅ MetaSift only** |
+| **Per-team stewardship leaderboard** | ❌ | ❌ | **✅ MetaSift only** |
 | **DuckDB metadata analytics** | ❌ | ❌ | **✅ MetaSift only** |
 
 > MetaSift brings Collate-level AI capabilities to the open-source community **and** adds a metadata cleaning layer that doesn't exist anywhere — not in OpenMetadata, not in Collate, not in Atlan, Collibra, or any other catalog tool.
@@ -79,8 +102,9 @@ graph TB
     subgraph Frontend
         UI[Streamlit UI]
         Stew[Stew AI Wizard]
-        Dash[Health Dashboard]
+        Viz[Visualizations]
         RQ[Review Queue]
+        Rep[Exec Report]
     end
 
     subgraph Agent Layer
@@ -109,35 +133,54 @@ graph TB
         DDB[(DuckDB In-Memory)]
     end
 
-    UI --> Agent
+    UI --> Stew
     Stew --> Agent
     Agent --> MR
     MR --> OR
     Agent --> AE
     Agent --> SE
     Agent --> CE
-    AE --> MCP
+    Agent -->|read-only discovery| MCP
     AE --> DDB
-    SE --> MCP
-    SE --> REST
-    CE --> REST
     CE --> DDB
+    SE --> REST
+    DDB -->|hydrated via| REST
     MCP --> ES
     MCP --> DB
     REST --> DB
-    Dash --> DDB
-    SE --> RQ
-    CE --> RQ
-    RQ -->|approved| REST
+    Viz --> DDB
+    Rep --> DDB
+    RQ --> DDB
+    RQ -->|approved writes| REST
 ```
 
 ## OpenMetadata integration depth
 
-MetaSift touches 14 integration points across MCP and REST APIs:
+MetaSift uses **three complementary channels** into OpenMetadata, each for what it's best at:
 
-**MCP tools (5):** search_metadata, get_entity_details, get_entity_lineage, create_glossary, create_glossary_term
+### 1. REST API (`/api/v1`) — bulk reads + gated writes
 
-**REST API endpoints (9):** PATCH tables (descriptions), PATCH tables (tags), GET tables (bulk listing), GET table profiles (profiler data), GET data quality test cases, GET tags/classifications, GET glossary terms, POST glossary terms, GET users (owner listing)
+- `GET /v1/tables?fields=columns,tags,owners,description,profile` — paginated bulk fetch, hydrates DuckDB in one pass
+- `GET /v1/tables/name/{fqn}` — single-entity lookup for validation + detail views
+- `GET /v1/lineage/table/name/{fqn}?upstreamDepth=1&downstreamDepth=1` — per-table lineage walked during refresh to build an `om_lineage` DuckDB table
+- `PATCH /v1/tables/name/{fqn}` with `application/json-patch+json` — description updates AND column-tag updates (same endpoint, different ops)
+- `PUT /v1/teams` + `PATCH /v1/tables/name/{fqn}` (owners path) — team + ownership management in the seed script
+
+### 2. MCP (`/mcp`) — read-only agent-facing discovery
+
+Loaded via `ai_sdk.AISdk(host, token).mcp.as_langchain_tools()` and filtered by a **hard-coded allowlist** so write-capable MCP ops stay excluded — the review queue is the only write surface.
+
+- `search_metadata` — keyword search across the catalog (any entity type)
+- `get_entity_details` — full state of a single entity (used for deep-dive questions)
+- `get_entity_lineage` — upstream/downstream traversal (used by Stew for "what depends on X?" queries)
+
+Explicitly **excluded**: `patch_entity` (would bypass the review queue) and `create_glossary*` (out of MetaSift's scope).
+
+### 3. openmetadata-ingestion SDK — pinned for write compatibility
+
+The SDK is pinned in `pyproject.toml` at the server version (1.9.4) to keep pydantic + schema compatibility guaranteed on write-backs.
+
+**Agent tool registry:** 18 local MetaSift tools + 3 allowlisted MCP tools = **21 tools** available to Stew per turn.
 
 ## Composite quality score
 
@@ -152,11 +195,12 @@ MetaSift's headline metric — weighted combination:
 
 | Layer | Technology | Why |
 |-------|-----------|-----|
-| Metadata platform | OpenMetadata 1.9.4 | Hackathon sponsor, MCP server, 100+ connectors |
-| AI orchestration | LangChain + AI SDK | Official integration path for MCP to LLM tools |
-| LLM (free) | OpenRouter (Llama 3.3 70B Instruct) | $0 cost, strong tool-calling, per-task routing |
-| Analytics | DuckDB | In-process SQL on metadata, zero config |
-| Frontend | Streamlit | Rapid UI, native chat + charts |
+| Metadata platform | OpenMetadata 1.9.4 | Hackathon sponsor; MCP server + REST API + 100+ connectors |
+| AI orchestration | LangChain 1.x (`create_agent` / LangGraph) | Unified agent API with streaming + tool calling |
+| MCP bridge | `data-ai-sdk` (import `ai_sdk`) | Converts OM's MCP tools into LangChain `BaseTool` instances |
+| LLM (free) | OpenRouter | Llama 3.3 70B for most tasks, GPT-4o-mini for tool-calling (Llama was looping on introspection) |
+| Analytics | DuckDB (in-memory) | Zero-config SQL over the metadata cache; recursive CTEs for lineage |
+| Frontend | Streamlit | Chat pane, review queue panel, visualizations panel — all with session state |
 | Visualization | Plotly | Interactive charts in Streamlit |
 | Fuzzy matching | thefuzz | Naming inconsistency detection |
 | Deployment | Docker Compose | One-command setup |
@@ -206,17 +250,20 @@ make run
 ```
 metasift/
 ├── app/
-│   ├── main.py              # Streamlit entry point
+│   ├── main.py              # Streamlit entry point (chat, review queue, viz panel)
 │   ├── config.py            # Settings from .env
 │   ├── clients/
 │   │   ├── llm.py           # LLM client (OpenRouter, per-task model routing)
-│   │   ├── openmetadata.py  # SDK + REST wrapper
-│   │   └── duck.py          # DuckDB store (metadata as a dataset)
+│   │   ├── openmetadata.py  # REST wrapper + SDK handles
+│   │   └── duck.py          # DuckDB store — om_tables, om_columns, om_lineage
 │   └── engines/
-│       ├── analysis.py      # Catalog-wide SQL analytics
-│       ├── stewardship.py   # Auto-doc, PII tagging, write-back
-│       ├── cleaning.py      # Stale detection, conflicts, quality scoring
-│       └── agent.py         # LangChain agent over MCP tools
+│       ├── analysis.py      # Catalog-wide SQL analytics + blast radius + ownership breakdown
+│       ├── stewardship.py   # Auto-doc, bulk per-schema, PII tagging, write-back
+│       ├── cleaning.py      # Stale detection, conflicts, quality scoring, heuristic PII
+│       ├── tools.py         # LangChain @tool wrappers over the engines (18 tools)
+│       ├── report.py        # Markdown executive report generator
+│       ├── viz.py           # Plotly figure builders for the 7-tab viz panel
+│       └── agent.py         # LangChain agent over local + MCP tools
 ├── scripts/
 │   └── seed_messy_catalog.py  # Populate OM with sample catalog data
 ├── tests/                     # pytest smoke tests
@@ -246,11 +293,12 @@ MetaSift only sends structural metadata to external LLMs — column names, data 
 
 ## Future roadmap
 
-- Scheduled stewardship runs (nightly auto-documentation + cleaning)
+- Scheduled stewardship runs (nightly auto-documentation + cleaning via APScheduler or OM's airflow-based ingestion framework)
 - Local LLM fallback via Ollama for air-gapped environments
-- Multi-catalog support (compare dev/staging/prod)
+- Multi-catalog support (compare dev/staging/prod quality over time)
 - Data contract validation using OpenMetadata's Contracts API
-- Team stewardship scoring and leaderboards
+- Column profiler integration — pull row counts / null % / distinct-value stats for real source DBs and factor into the quality score
+- Data quality test cases as a 5th composite-score dimension
 - Custom agent workflows (no-code builder)
 - Plugin system for industry-specific analyzers
 
