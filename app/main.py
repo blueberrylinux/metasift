@@ -21,7 +21,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from app.clients import duck, openmetadata
 from app.config import settings
 from app.engines import agent as agent_mod
-from app.engines import analysis, cleaning, report, stewardship
+from app.engines import analysis, cleaning, report, stewardship, viz
 from app.engines.stewardship import Suggestion
 
 _PII_TAG_OPTIONS = ["PII.Sensitive", "PII.NonSensitive", "PII.None"]
@@ -464,6 +464,52 @@ def _render_review_panel() -> None:
         _render_review_card(item)
 
 
+# ── Visualizations panel ───────────────────────────────────────────────────
+# Interactive plotly charts — each tab renders a different angle on the
+# catalog (headline score, lineage DAG, hierarchy, tag conflicts, quality).
+# Tabs whose backing data isn't ready show a hint so users know what to run.
+
+
+def _render_viz_panel() -> None:
+    top_l, top_r = st.columns([5, 1])
+    with top_l:
+        st.markdown("## 📊 Visualizations")
+        st.caption(
+            "Interactive views across your catalog. Charts update after each "
+            "Refresh / Deep scan / PII scan — some tabs need specific scans run first."
+        )
+    with top_r:
+        if st.button("← Back to chat", use_container_width=True, key="viz_back"):
+            st.session_state.show_viz = False
+            st.rerun()
+
+    # One tab per entry in viz.ALL_VIZ. Tabs that return None get a hint
+    # pointing the user at the sidebar scan that populates their data.
+    tab_labels = [label for label, _, _ in viz.ALL_VIZ]
+    tabs = st.tabs(tab_labels)
+    for (label, caption, builder), tab in zip(viz.ALL_VIZ, tabs, strict=True):
+        with tab:
+            st.caption(caption)
+            try:
+                fig = builder()
+            except Exception as e:
+                st.error(f"Chart failed to render: {e}")
+                continue
+            if fig is None:
+                st.info(
+                    "Not enough data yet. "
+                    "Run **🔄 Refresh metadata**, **🔬 Deep scan**, or **🔐 PII scan** "
+                    "from the sidebar, then come back."
+                )
+                continue
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"viz::{label}",
+                config={"displaylogo": False},
+            )
+
+
 # ── Sidebar ────────────────────────────────────────────────────────────────
 with st.sidebar:
     if LOGO_B64:
@@ -594,6 +640,19 @@ with st.sidebar:
         help="Approve or reject suggestions from the cleaning and PII engines",
     ):
         st.session_state.show_review = not in_review
+        st.session_state.show_viz = False
+        st.rerun()
+
+    # Visualizations toggle. Shows only once metadata is loaded — an empty
+    # DuckDB would produce None-figures across every tab.
+    in_viz = bool(st.session_state.get("show_viz"))
+    if viz.has_any_data() and st.button(
+        "← Back to chat" if in_viz else "📊 Visualizations",
+        use_container_width=True,
+        help="Interactive plotly charts — lineage, PII distribution, quality, and more",
+    ):
+        st.session_state.show_viz = not in_viz
+        st.session_state.show_review = False
         st.rerun()
 
     # Executive report download. Generated eagerly on render (cheap — all
@@ -633,6 +692,10 @@ with st.sidebar:
 # returns the user to their conversation exactly as they left it.
 if st.session_state.get("show_review"):
     _render_review_panel()
+    st.stop()
+
+if st.session_state.get("show_viz"):
+    _render_viz_panel()
     st.stop()
 
 # Pending prompts come from suggestion-chip clicks; they short-circuit the

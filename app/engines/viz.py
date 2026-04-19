@@ -1,0 +1,436 @@
+"""Interactive plotly visualizations for the catalog.
+
+One builder per figure. Each returns a plotly.graph_objects.Figure ready
+for st.plotly_chart — or None if the backing data isn't populated yet.
+Keep these pure (no Streamlit imports) so they're testable in isolation.
+"""
+
+from __future__ import annotations
+
+import math
+
+import pandas as pd
+import plotly.graph_objects as go
+
+from app.clients import duck
+from app.engines import analysis
+
+# Shared Plotly palette — schemas get consistent colors across charts.
+_SCHEMA_COLORS = {
+    "sales": "#60a5fa",
+    "marketing": "#f472b6",
+    "users": "#4ade80",
+    "finance": "#fbbf24",
+}
+_DEFAULT_COLOR = "#9ca3af"
+
+
+def _schema_of(fqn: str) -> str:
+    parts = fqn.split(".")
+    return parts[2] if len(parts) >= 3 else "other"
+
+
+def _short_of(fqn: str) -> str:
+    parts = fqn.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else fqn
+
+
+# ── 1. Composite score gauge ───────────────────────────────────────────────
+
+
+def composite_gauge() -> go.Figure | None:
+    """Big-number gauge for the headline composite score."""
+    try:
+        s = analysis.composite_score()
+    except Exception:
+        return None
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=s["composite"],
+            number={"suffix": "%", "font": {"size": 48}},
+            delta={"reference": 80, "increasing": {"color": "#4ade80"}},
+            gauge={
+                "axis": {"range": [0, 100], "tickwidth": 1},
+                "bar": {"color": "#60a5fa"},
+                "steps": [
+                    {"range": [0, 40], "color": "#7f1d1d"},
+                    {"range": [40, 70], "color": "#854d0e"},
+                    {"range": [70, 100], "color": "#14532d"},
+                ],
+                "threshold": {
+                    "line": {"color": "#f87171", "width": 3},
+                    "thickness": 0.75,
+                    "value": 80,
+                },
+            },
+            title={"text": "Composite Quality Score<br><sub>target: 80%</sub>"},
+        )
+    )
+    fig.update_layout(height=380, margin={"t": 50, "b": 20, "l": 20, "r": 20})
+    return fig
+
+
+# ── 2. Lineage DAG (scatter + lines) ────────────────────────────────────────
+
+
+def lineage_dag() -> go.Figure | None:
+    """Force-style-ish DAG of the catalog's lineage edges."""
+    try:
+        tables = duck.query(
+            "SELECT fullyQualifiedName AS fqn, description FROM om_tables ORDER BY fqn"
+        )
+        edges = duck.query("SELECT source_fqn, target_fqn FROM om_lineage")
+    except Exception:
+        return None
+    if tables.empty or edges.empty:
+        return None
+
+    # Group nodes by schema, place them in vertical columns per schema so
+    # the DAG reads left-to-right roughly by domain. Simple, deterministic,
+    # avoids pulling networkx just for layout.
+    schemas: dict[str, list[str]] = {}
+    for _, r in tables.iterrows():
+        schemas.setdefault(_schema_of(r["fqn"]), []).append(r["fqn"])
+
+    positions: dict[str, tuple[float, float]] = {}
+    schema_order = sorted(schemas.keys())
+    for x_idx, schema in enumerate(schema_order):
+        members = sorted(schemas[schema])
+        n = len(members)
+        for y_idx, fqn in enumerate(members):
+            # Center each schema column vertically; spread tables by evenly
+            y = (y_idx - (n - 1) / 2.0) * 1.5
+            positions[fqn] = (float(x_idx) * 2.5, y)
+
+    # Edge traces — one continuous scatter with None breaks between edges
+    edge_x: list[float | None] = []
+    edge_y: list[float | None] = []
+    for _, r in edges.iterrows():
+        if r["source_fqn"] in positions and r["target_fqn"] in positions:
+            x0, y0 = positions[r["source_fqn"]]
+            x1, y1 = positions[r["target_fqn"]]
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x,
+        y=edge_y,
+        mode="lines",
+        line={"color": "rgba(148,163,184,0.55)", "width": 1.6},
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+    # Node trace — color by schema, size by in+out degree, hover with description
+    degrees: dict[str, int] = {}
+    for _, r in edges.iterrows():
+        degrees[r["source_fqn"]] = degrees.get(r["source_fqn"], 0) + 1
+        degrees[r["target_fqn"]] = degrees.get(r["target_fqn"], 0) + 1
+
+    node_x, node_y, node_text, node_colors, node_sizes, node_labels = [], [], [], [], [], []
+    for _, r in tables.iterrows():
+        fqn = r["fqn"]
+        if fqn not in positions:
+            continue
+        x, y = positions[fqn]
+        node_x.append(x)
+        node_y.append(y)
+        desc = (r["description"] or "").strip() or "<i>(no description)</i>"
+        node_text.append(f"<b>{_short_of(fqn)}</b><br>{desc[:160]}")
+        node_colors.append(_SCHEMA_COLORS.get(_schema_of(fqn), _DEFAULT_COLOR))
+        deg = degrees.get(fqn, 0)
+        node_sizes.append(18 + min(deg, 6) * 6)
+        node_labels.append(_short_of(fqn).split(".")[-1])
+
+    node_trace = go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode="markers+text",
+        text=node_labels,
+        textposition="bottom center",
+        textfont={"size": 11, "color": "rgba(226,232,240,0.9)"},
+        hovertext=node_text,
+        hoverinfo="text",
+        marker={
+            "size": node_sizes,
+            "color": node_colors,
+            "line": {"color": "rgba(15,23,42,0.8)", "width": 1.5},
+        },
+        showlegend=False,
+    )
+
+    # Schema labels at the top of each column
+    annotations = [
+        {
+            "x": x_idx * 2.5,
+            "y": max((positions[fqn][1] for fqn in schemas[schema]), default=0) + 1.2,
+            "text": f"<b>{schema}</b>",
+            "showarrow": False,
+            "font": {"size": 13, "color": _SCHEMA_COLORS.get(schema, _DEFAULT_COLOR)},
+        }
+        for x_idx, schema in enumerate(schema_order)
+    ]
+
+    fig = go.Figure(data=[edge_trace, node_trace])
+    fig.update_layout(
+        height=520,
+        margin={"t": 40, "b": 20, "l": 20, "r": 20},
+        xaxis={"visible": False},
+        yaxis={"visible": False},
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        annotations=annotations,
+        title="Catalog lineage graph — nodes sized by # connections",
+    )
+    return fig
+
+
+# ── 3. Catalog treemap (schema → table → columns) ───────────────────────────
+
+
+def catalog_treemap() -> go.Figure | None:
+    """Hierarchical view — tables sized by column count, colored by PII share."""
+    try:
+        tables = duck.query("""
+            SELECT fullyQualifiedName AS fqn, length(columns) AS col_count
+            FROM om_tables
+            ORDER BY fqn
+        """)
+        cols = duck.query("""
+            SELECT table_fqn, name,
+                   CASE WHEN list_contains(tags, 'PII.Sensitive') THEN 'Sensitive'
+                        WHEN list_contains(tags, 'PII.NonSensitive') THEN 'NonSensitive'
+                        ELSE 'None' END AS pii_class
+            FROM om_columns
+        """)
+    except Exception:
+        return None
+    if tables.empty:
+        return None
+
+    # Per-table PII ratio for color (higher = more sensitive columns)
+    pii_by_table = (
+        cols.groupby("table_fqn")
+        .apply(
+            lambda d: (d["pii_class"] == "Sensitive").sum() / max(len(d), 1),
+            include_groups=False,
+        )
+        .to_dict()
+    )
+
+    ids: list[str] = []
+    labels: list[str] = []
+    parents: list[str] = []
+    values: list[float] = []
+    colors: list[float] = []
+    hover: list[str] = []
+
+    # Root
+    ids.append("catalog")
+    labels.append("Catalog")
+    parents.append("")
+    values.append(int(tables["col_count"].sum()))
+    colors.append(0.0)
+    hover.append(f"{len(tables)} tables · {int(tables['col_count'].sum())} columns")
+
+    # Schemas
+    schemas = sorted({_schema_of(f) for f in tables["fqn"]})
+    for schema in schemas:
+        schema_tables = tables[tables["fqn"].str.split(".").str[2] == schema]
+        ids.append(f"schema::{schema}")
+        labels.append(schema)
+        parents.append("catalog")
+        values.append(int(schema_tables["col_count"].sum()))
+        colors.append(0.0)
+        hover.append(f"{len(schema_tables)} tables")
+
+    # Tables
+    for _, r in tables.iterrows():
+        fqn = r["fqn"]
+        short_table = fqn.rsplit(".", 1)[-1]
+        schema = _schema_of(fqn)
+        pii_ratio = pii_by_table.get(fqn, 0.0)
+        ids.append(f"table::{fqn}")
+        labels.append(short_table)
+        parents.append(f"schema::{schema}")
+        values.append(int(r["col_count"]) or 1)
+        colors.append(float(pii_ratio))
+        hover.append(
+            f"<b>{short_table}</b><br>"
+            f"{r['col_count']} columns<br>"
+            f"{pii_ratio:.0%} of columns tagged Sensitive"
+        )
+
+    fig = go.Figure(
+        go.Treemap(
+            ids=ids,
+            labels=labels,
+            parents=parents,
+            values=values,
+            branchvalues="total",
+            marker={
+                "colors": colors,
+                "colorscale": [
+                    [0.0, "#1e3a8a"],
+                    [0.5, "#7c3aed"],
+                    [1.0, "#be185d"],
+                ],
+                "cmin": 0,
+                "cmax": 1,
+                "showscale": True,
+                "colorbar": {
+                    "title": {"text": "% cols<br>Sensitive"},
+                    "thickness": 14,
+                },
+            },
+            hovertext=hover,
+            hoverinfo="text",
+            textinfo="label+value",
+        )
+    )
+    fig.update_layout(
+        height=520,
+        margin={"t": 30, "b": 10, "l": 10, "r": 10},
+        title="Catalog map — tiles sized by column count, colored by PII.Sensitive share",
+    )
+    return fig
+
+
+# ── 4. Tag conflict heatmap ─────────────────────────────────────────────────
+
+
+def tag_conflict_heatmap() -> go.Figure | None:
+    """Columns (rows) × tables (cols) colored by tag state.
+
+    0 = untagged, 1 = NonSensitive, 2 = Sensitive. Rows restricted to column
+    names that appear in multiple tables so the heatmap surfaces actual
+    conflicts rather than one-off tags.
+    """
+    try:
+        cols = duck.query("""
+            WITH multi AS (
+                SELECT name FROM om_columns GROUP BY name HAVING COUNT(*) > 1
+            )
+            SELECT
+                name,
+                table_fqn,
+                CASE WHEN list_contains(tags, 'PII.Sensitive') THEN 2
+                     WHEN list_contains(tags, 'PII.NonSensitive') THEN 1
+                     ELSE 0 END AS tag_code
+            FROM om_columns
+            WHERE name IN (SELECT name FROM multi)
+            ORDER BY name, table_fqn
+        """)
+    except Exception:
+        return None
+    if cols.empty:
+        return None
+
+    # Pivot to a matrix: columns as rows, tables as columns
+    matrix = cols.pivot_table(index="name", columns="table_fqn", values="tag_code", fill_value=-1)
+    # Short labels for tables
+    matrix.columns = [_short_of(c) for c in matrix.columns]
+    z = matrix.values
+    text = [[_tag_code_label(c) for c in row] for row in z]
+
+    fig = go.Figure(
+        go.Heatmap(
+            z=z,
+            x=list(matrix.columns),
+            y=list(matrix.index),
+            text=text,
+            hovertemplate="<b>%{y}</b> in <b>%{x}</b><br>Tag: %{text}<extra></extra>",
+            colorscale=[
+                [0.00, "#1f2937"],  # missing
+                [0.33, "#374151"],  # untagged
+                [0.66, "#2dd4bf"],  # non-sensitive
+                [1.00, "#f43f5e"],  # sensitive
+            ],
+            zmin=-1,
+            zmax=2,
+            showscale=True,
+            colorbar={
+                "tickvals": [-1, 0, 1, 2],
+                "ticktext": ["n/a", "untagged", "NonSens.", "Sensitive"],
+                "thickness": 14,
+            },
+        )
+    )
+    fig.update_layout(
+        height=max(320, 50 * len(matrix.index)),
+        margin={"t": 50, "b": 60, "l": 120, "r": 20},
+        title="Tag conflicts — column × table → PII tag",
+        xaxis={"tickangle": -30},
+    )
+    return fig
+
+
+def _tag_code_label(code: float) -> str:
+    code = int(code) if not math.isnan(code) else -1
+    return {-1: "—", 0: "untagged", 1: "NonSensitive", 2: "Sensitive"}.get(code, "—")
+
+
+# ── 5. Description quality histogram ────────────────────────────────────────
+
+
+def quality_histogram() -> go.Figure | None:
+    """Distribution of description quality scores (1-5) across tables."""
+    try:
+        df = duck.query("""
+            SELECT fqn, quality_score
+            FROM cleaning_results
+            WHERE quality_score IS NOT NULL AND quality_score > 0
+        """)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+
+    # Bucket counts per integer score so we can color bars by severity
+    counts = df["quality_score"].value_counts().sort_index()
+    bucket_colors = {1: "#ef4444", 2: "#f97316", 3: "#eab308", 4: "#84cc16", 5: "#22c55e"}
+
+    fig = go.Figure(
+        go.Bar(
+            x=[f"{s}/5" for s in counts.index],
+            y=counts.values,
+            marker={"color": [bucket_colors.get(int(s), _DEFAULT_COLOR) for s in counts.index]},
+            text=counts.values,
+            textposition="outside",
+            hovertemplate="<b>Score %{x}</b><br>%{y} table(s)<extra></extra>",
+        )
+    )
+    mean_score = float(df["quality_score"].mean())
+    fig.update_layout(
+        height=360,
+        margin={"t": 60, "b": 40, "l": 40, "r": 20},
+        title=(f"Description quality — {len(df)} table(s) analyzed · mean {mean_score:.2f}/5"),
+        xaxis={"title": "Quality score (1 = useless, 5 = excellent)"},
+        yaxis={"title": "# tables"},
+        showlegend=False,
+    )
+    return fig
+
+
+# ── Registry (kept flat so main.py can just iterate) ────────────────────────
+
+ALL_VIZ: list[tuple[str, str, callable]] = [
+    ("🎯 Score gauge", "composite score as a speedometer", composite_gauge),
+    ("🔗 Lineage", "catalog dependency graph", lineage_dag),
+    ("🗺️ Catalog map", "treemap by schema / table / PII share", catalog_treemap),
+    ("🔥 Tag conflicts", "column × table → tag heatmap", tag_conflict_heatmap),
+    ("📈 Quality", "description quality distribution", quality_histogram),
+]
+
+
+def has_any_data() -> bool:
+    """Cheap check used by main.py to gate the sidebar button."""
+    try:
+        return bool(duck.query("SELECT 1 FROM om_tables LIMIT 1").size)
+    except Exception:
+        return False
+
+
+# Silence pandas FutureWarning on groupby.apply in a forward-compatible way
+_ = pd  # kept for typing / future helpers
