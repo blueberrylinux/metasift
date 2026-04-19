@@ -371,7 +371,135 @@ def _tag_code_label(code: float) -> str:
     return {-1: "—", 0: "untagged", 1: "NonSensitive", 2: "Sensitive"}.get(code, "—")
 
 
-# ── 5. Description quality histogram ────────────────────────────────────────
+# ── Stewardship leaderboard (per-team dual-axis bars) ──────────────────────
+
+
+def stewardship_leaderboard() -> go.Figure | None:
+    """Per-team horizontal bars — tables owned + coverage %.
+
+    Two-metric view: blue for tables-owned (absolute), green for coverage
+    percent (0-100). Orphaned tables called out in the title.
+    """
+    df = analysis.ownership_breakdown()
+    orphans_df = analysis.orphans()
+    if df.empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_bar(
+        y=df["team"],
+        x=df["tables_owned"],
+        name="Tables owned",
+        orientation="h",
+        marker={"color": "#60a5fa"},
+        text=df["tables_owned"],
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>Tables owned: %{x}<extra></extra>",
+        offsetgroup="a",
+        xaxis="x",
+    )
+    fig.add_bar(
+        y=df["team"],
+        x=df["coverage_pct"],
+        name="Coverage %",
+        orientation="h",
+        marker={"color": "#4ade80"},
+        text=[f"{v}%" for v in df["coverage_pct"]],
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>Coverage: %{x}%<extra></extra>",
+        offsetgroup="b",
+        xaxis="x2",
+    )
+
+    orphan_note = (
+        f" · {len(orphans_df)} orphan table(s) — see chat for `ownership_report`"
+        if not orphans_df.empty
+        else " · no orphans 🎉"
+    )
+    fig.update_layout(
+        height=max(320, 70 * len(df) + 80),
+        title=f"Stewardship leaderboard — tables owned vs coverage{orphan_note}",
+        barmode="group",
+        margin={"t": 60, "b": 40, "l": 140, "r": 80},
+        xaxis={"title": "Tables owned", "side": "bottom"},
+        xaxis2={"title": "Coverage %", "overlaying": "x", "side": "top", "range": [0, 110]},
+        yaxis={"autorange": "reversed"},
+        legend={"orientation": "h", "y": -0.18, "x": 0.5, "xanchor": "center"},
+    )
+    return fig
+
+
+# ── 5. Blast radius bar chart ───────────────────────────────────────────────
+
+
+def blast_radius_bars() -> go.Figure | None:
+    """Top-N tables by downstream impact score — stacked bar chart."""
+    df = analysis.top_blast_radius(limit=10)
+    if df.empty or df["impact_score"].sum() == 0:
+        return None
+
+    # Keep only tables with any downstream impact — leaves clutter the chart
+    df = df[df["impact_score"] > 0].reset_index(drop=True)
+    if df.empty:
+        return None
+
+    short_labels = [_short_of(f) for f in df["fqn"]]
+    # Stacked: direct, transitive-only (transitive - direct), PII downstream
+    direct = df["direct"]
+    transitive_only = df["transitive"] - df["direct"]
+    pii = df["pii_downstream"]
+
+    fig = go.Figure()
+    fig.add_bar(
+        y=short_labels,
+        x=direct,
+        name="Direct dependents",
+        orientation="h",
+        marker={"color": "#60a5fa"},
+        hovertemplate="<b>%{y}</b><br>Direct: %{x}<extra></extra>",
+    )
+    fig.add_bar(
+        y=short_labels,
+        x=transitive_only,
+        name="Transitive-only",
+        orientation="h",
+        marker={"color": "#a78bfa"},
+        hovertemplate="<b>%{y}</b><br>Transitive-only: %{x}<extra></extra>",
+    )
+    fig.add_bar(
+        y=short_labels,
+        x=pii,
+        name="PII downstream",
+        orientation="h",
+        marker={"color": "#f43f5e"},
+        hovertemplate="<b>%{y}</b><br>PII downstream: %{x}<extra></extra>",
+    )
+    # Annotate the impact_score at the end of each stack
+    annotations = [
+        {
+            "x": row["direct"] + (row["transitive"] - row["direct"]) + row["pii_downstream"] + 0.25,
+            "y": short_labels[i],
+            "text": f"<b>{row['impact_score']}</b>",
+            "showarrow": False,
+            "font": {"size": 11, "color": "#fbbf24"},
+            "xanchor": "left",
+        }
+        for i, (_, row) in enumerate(df.iterrows())
+    ]
+    fig.update_layout(
+        height=max(340, 40 * len(df) + 80),
+        barmode="stack",
+        margin={"t": 60, "b": 40, "l": 140, "r": 60},
+        title="Blast radius — top tables by downstream impact (stack = counts, label = weighted score)",
+        xaxis={"title": "Downstream count (stacked)"},
+        yaxis={"autorange": "reversed"},
+        legend={"orientation": "h", "y": -0.15, "x": 0.5, "xanchor": "center"},
+        annotations=annotations,
+    )
+    return fig
+
+
+# ── 6. Description quality histogram ────────────────────────────────────────
 
 
 def quality_histogram() -> go.Figure | None:
@@ -418,6 +546,8 @@ def quality_histogram() -> go.Figure | None:
 ALL_VIZ: list[tuple[str, str, callable]] = [
     ("🎯 Score gauge", "composite score as a speedometer", composite_gauge),
     ("🔗 Lineage", "catalog dependency graph", lineage_dag),
+    ("💥 Blast radius", "top tables ranked by downstream impact", blast_radius_bars),
+    ("👥 Stewardship", "per-team scorecard + orphan count", stewardship_leaderboard),
     ("🗺️ Catalog map", "treemap by schema / table / PII share", catalog_treemap),
     ("🔥 Tag conflicts", "column × table → tag heatmap", tag_conflict_heatmap),
     ("📈 Quality", "description quality distribution", quality_histogram),

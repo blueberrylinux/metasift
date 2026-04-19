@@ -368,6 +368,14 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
 - Auto-document an entire schema in one pass — drafts go to the review queue
 - Apply an approved description back to the catalog
 
+**Impact analysis**
+- Compute blast radius for a table (direct + transitive downstream, weighted by PII)
+- Rank the whole catalog by downstream impact
+
+**Stewardship accountability**
+- Per-team scorecard — who owns what, coverage per team, PII footprint
+- Orphan-table detection — tables with no assigned owner
+
 **Deeper OpenMetadata queries** _(via MCP)_
 - Keyword search across the catalog (entities, business terms)
 - Pull full entity details for any table/column
@@ -452,6 +460,102 @@ def generate_description_for(fqn: str) -> str:
         f"_Confidence: {suggestion.confidence:.0%}. "
         f"Ask the user to confirm before applying with `apply_description`._"
     )
+
+
+@tool
+def ownership_report() -> str:
+    """Per-team stewardship scorecard + list of unowned (orphan) tables.
+
+    Use when the user asks _"who owns what"_, _"which team is doing best/worst"_,
+    _"any orphan tables"_, _"stewardship leaderboard"_, _"who's responsible for
+    the sales schema"_, or similar team/ownership questions.
+
+    Reports per-team: tables owned, documentation coverage, PII-table count,
+    average quality (if deep scan has run). Separately lists tables with
+    no owner — those are accountability gaps worth flagging.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    breakdown = analysis.ownership_breakdown()
+    orphan_df = analysis.orphans()
+
+    lines: list[str] = ["**Stewardship scorecard**", ""]
+    if breakdown.empty:
+        lines.append("_No owned tables yet — every catalog entity is orphaned._")
+    else:
+        lines.append("| Team | Tables | Coverage | PII tables | Quality |")
+        lines.append("|---|---|---|---|---|")
+        for _, r in breakdown.iterrows():
+            q = r["quality_avg"]
+            q_text = f"{float(q):.1f}/5" if pd.notna(q) else "_—_"
+            lines.append(
+                f"| **{r['team']}** | {r['tables_owned']} | "
+                f"{r['coverage_pct']}% | {r['pii_tables']} | {q_text} |"
+            )
+        lines.append("")
+
+    if orphan_df.empty:
+        lines.append("✔ **No orphan tables** — every table has an owner.")
+    else:
+        lines.append(f"⚠️ **{len(orphan_df)} orphan table(s)** — no team is accountable:")
+        lines.append("")
+        for _, r in orphan_df.iterrows():
+            short = ".".join(r["fqn"].split(".")[-2:])
+            doc_marker = "📝" if r["documented"] else "❌"
+            lines.append(f"- {doc_marker} `{short}`")
+
+    return "\n".join(lines)
+
+
+@tool
+def impact_check(fqn: str) -> str:
+    """Compute the blast radius (downstream impact) of a specific table.
+
+    Use when the user asks _"what breaks if I change X?"_, _"show me the impact
+    of X"_, _"which tables are most critical"_, or _"blast radius for X"_.
+    Returns direct dependents, full transitive downstream count, how many of
+    those are PII-sensitive, and a weighted impact score.
+
+    Pass the FULL 4-part FQN — e.g. `metasift_demo_db.analytics.users.customer_profiles`.
+    If you don't know it, call `list_tables` or `search_metadata` first.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    if not fqn or not fqn.strip():
+        return "Tell me which table to check. Use `list_tables` if you need to find the FQN."
+    # Validate the FQN exists — catches hallucinated / short names up front.
+    check = duck.query(
+        "SELECT 1 FROM om_tables WHERE fullyQualifiedName = ?",
+        [fqn.strip()],
+    )
+    if check.empty:
+        return (
+            f"Table `{fqn}` doesn't exist in the catalog. "
+            f"Use `list_tables` to find the real 4-part FQN."
+        )
+    r = analysis.blast_radius(fqn.strip())
+    if r["transitive"] == 0:
+        return (
+            f"**`{fqn}`** is a leaf table — no downstream dependents.\n\n"
+            f"_Changes here won't ripple anywhere. Impact score: 0._"
+        )
+    lines = [
+        f"**Blast radius for `{fqn}`**",
+        "",
+        f"- **Direct dependents:** {r['direct']}",
+        f"- **Transitive downstream:** {r['transitive']} table(s)",
+        f"- **Downstream with PII.Sensitive:** {r['pii_downstream']}",
+        f"- **Weighted impact score:** **{r['impact_score']}** "
+        f"_(direct × 1 + transitive × 0.5 + PII downstream × 2)_",
+        "",
+        "Downstream tables:",
+    ]
+    for t in r["downstream_fqns"][:10]:
+        short = ".".join(t.split(".")[-2:])
+        lines.append(f"- `{short}`")
+    if len(r["downstream_fqns"]) > 10:
+        lines.append(f"- _…and {len(r['downstream_fqns']) - 10} more_")
+    return "\n".join(lines)
 
 
 @tool
@@ -695,6 +799,8 @@ ALL_TOOLS = [
     check_description_staleness,
     score_descriptions,
     about_metasift,
+    ownership_report,
+    impact_check,
     generate_description_for,
     auto_document_schema,
     apply_description,

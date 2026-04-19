@@ -258,6 +258,80 @@ def create_lineage_edges(c: httpx.Client) -> None:
         logger.info(f"  {status} {src_short} → {dst_short}")
 
 
+# Team assignments. Two tables left intentionally without an owner so MetaSift
+# has real "orphan" findings to surface in stewardship views.
+TEAMS: list[dict] = [
+    {
+        "name": "revenue-team",
+        "displayName": "Revenue Team",
+        "description": "Owns sales and finance pipelines end-to-end.",
+        "owns": [
+            "sales.orders",
+            "sales.refund_events",
+            "finance.invoices",
+            "finance.payments",
+        ],
+    },
+    {
+        "name": "marketing-team",
+        "displayName": "Marketing Team",
+        "description": "Owns campaign attribution and email delivery surfaces.",
+        "owns": ["marketing.campaign_attr", "marketing.email_sends"],
+    },
+    {
+        "name": "platform-team",
+        "displayName": "Platform Team",
+        "description": "Owns shared customer dimensions and identity.",
+        "owns": ["users.customer_profiles"],
+    },
+]
+# `sales.cart_abandonments` and `users.user_sessions` deliberately have no
+# owner — gives MetaSift's orphan-detection something real to flag.
+
+
+def ensure_teams_and_ownership(c: httpx.Client) -> None:
+    """Create each team (idempotent) then PATCH `owners` on the named tables.
+
+    Uses JSON Patch on `/v1/tables/name/{fqn}`. Re-running the seed overwrites
+    any owner overrides the user has applied manually — acceptable, since the
+    seed is meant to reset demo state.
+    """
+    logger.info(f"Seeding {len(TEAMS)} team(s) + ownership assignments...")
+    for team in TEAMS:
+        # Create or update the team
+        payload = {
+            "name": team["name"],
+            "displayName": team["displayName"],
+            "description": team["description"],
+            "teamType": "Group",
+        }
+        r = c.put("/v1/teams", json=payload)
+        if r.status_code not in (200, 201):
+            logger.warning(f"  ✘ team {team['name']}: {r.status_code}")
+            continue
+        team_id = r.json().get("id")
+        logger.info(f"  ✔ team {team['displayName']} ({team_id[:8]}…)")
+
+        # Assign ownership on each table
+        for short in team["owns"]:
+            schema, table = short.split(".", 1)
+            fqn = _table_fqn(schema, table)
+            patch = [
+                {
+                    "op": "add",
+                    "path": "/owners",
+                    "value": [{"id": team_id, "type": "team"}],
+                }
+            ]
+            r2 = c.patch(
+                f"/v1/tables/name/{fqn}",
+                headers={"Content-Type": "application/json-patch+json"},
+                json=patch,
+            )
+            status = "✔" if r2.status_code == 200 else f"✘ {r2.status_code}"
+            logger.info(f"    {status} {short} ← {team['name']}")
+
+
 def main() -> int:
     logger.info("Seeding sample catalog into OpenMetadata...")
     random.seed(42)
@@ -269,6 +343,7 @@ def main() -> int:
             for spec in tables:
                 create_table(c, schema, spec)
         create_lineage_edges(c)
+        ensure_teams_and_ownership(c)
     logger.success("Seeding complete.")
     logger.info("Open http://localhost:8585 → Explore → you'll see metasift_demo_db.")
     return 0

@@ -22,6 +22,188 @@ def documentation_coverage() -> pd.DataFrame:
     """)
 
 
+def ownership_breakdown() -> pd.DataFrame:
+    """Per-team stewardship scorecard.
+
+    Aggregates each team's table count, documentation coverage, avg
+    description quality (if deep scan has run), and PII-table footprint.
+    Tables with no owner are excluded here — see `orphans()` for those.
+    """
+    try:
+        has_cleaning = _has_cleaning_results()
+        quality_join = ""
+        quality_select = "NULL AS quality_avg"
+        if has_cleaning:
+            quality_join = """
+                LEFT JOIN cleaning_results cr
+                  ON cr.fqn = t.fullyQualifiedName
+            """
+            quality_select = "AVG(cr.quality_score) AS quality_avg"
+        return duck.query(f"""
+            WITH owned AS (
+                SELECT
+                    t.fullyQualifiedName AS fqn,
+                    t.description,
+                    CASE WHEN len(t.owners) > 0 THEN t.owners[1].displayName ELSE NULL END AS team,
+                    CASE WHEN len(t.owners) > 0 THEN t.owners[1].name ELSE NULL END AS team_name,
+                    CASE WHEN t.description IS NULL OR length(t.description) = 0 THEN 0 ELSE 1 END AS documented
+                FROM om_tables t
+            ),
+            pii_tables AS (
+                SELECT DISTINCT table_fqn
+                FROM om_columns
+                WHERE list_contains(tags, 'PII.Sensitive')
+            )
+            SELECT
+                o.team AS team,
+                o.team_name AS team_slug,
+                COUNT(*) AS tables_owned,
+                SUM(o.documented) AS documented,
+                ROUND(100.0 * SUM(o.documented) / COUNT(*), 1) AS coverage_pct,
+                COUNT(DISTINCT p.table_fqn) AS pii_tables,
+                {quality_select}
+            FROM owned o
+            LEFT JOIN pii_tables p ON p.table_fqn = o.fqn
+            {quality_join}
+            WHERE o.team IS NOT NULL
+            GROUP BY o.team, o.team_name
+            ORDER BY coverage_pct DESC, tables_owned DESC
+        """)
+    except Exception:
+        return pd.DataFrame(
+            columns=[
+                "team",
+                "team_slug",
+                "tables_owned",
+                "documented",
+                "coverage_pct",
+                "pii_tables",
+                "quality_avg",
+            ]
+        )
+
+
+def orphans() -> pd.DataFrame:
+    """Tables with no owner — metadata debt nobody's on the hook for."""
+    try:
+        return duck.query("""
+            SELECT
+                fullyQualifiedName AS fqn,
+                CASE WHEN description IS NULL OR length(description) = 0 THEN FALSE ELSE TRUE END AS documented
+            FROM om_tables
+            WHERE len(owners) = 0
+            ORDER BY fqn
+        """)
+    except Exception:
+        return pd.DataFrame(columns=["fqn", "documented"])
+
+
+def blast_radius(fqn: str, max_depth: int = 10) -> dict:
+    """Downstream impact footprint for a single table.
+
+    Walks om_lineage transitively and counts everything downstream of `fqn`,
+    separating direct dependents from transitive ones. Also counts how many
+    downstream tables carry at least one PII.Sensitive column — a weighted
+    `impact_score` combines the two so high-blast-on-sensitive-data tables
+    rank higher than high-blast-on-plain-data tables.
+
+    Returns {fqn, direct, transitive, pii_downstream, impact_score,
+    downstream_fqns}. If lineage data isn't loaded, all counts are 0.
+    """
+    try:
+        direct_df = duck.query(
+            "SELECT target_fqn FROM om_lineage WHERE source_fqn = ?",
+            [fqn],
+        )
+    except Exception:
+        return {
+            "fqn": fqn,
+            "direct": 0,
+            "transitive": 0,
+            "pii_downstream": 0,
+            "impact_score": 0.0,
+            "downstream_fqns": [],
+        }
+
+    direct_downstream = direct_df["target_fqn"].tolist() if not direct_df.empty else []
+
+    # Transitive closure via a recursive CTE. max_depth bounds runaway on
+    # accidental cycles — the catalog is a DAG but nothing enforces that.
+    all_df = duck.query(
+        """
+        WITH RECURSIVE downstream(node, depth) AS (
+            SELECT target_fqn, 1 FROM om_lineage WHERE source_fqn = ?
+            UNION
+            SELECT l.target_fqn, d.depth + 1
+            FROM om_lineage l
+            JOIN downstream d ON l.source_fqn = d.node
+            WHERE d.depth < ?
+        )
+        SELECT DISTINCT node AS fqn FROM downstream
+        """,
+        [fqn, int(max_depth)],
+    )
+    all_downstream: list[str] = all_df["fqn"].tolist() if not all_df.empty else []
+
+    # How many downstream tables have at least one PII.Sensitive column?
+    pii_count = 0
+    if all_downstream:
+        placeholders = ",".join(["?"] * len(all_downstream))
+        pii_df = duck.query(
+            f"""
+            SELECT COUNT(DISTINCT table_fqn) AS n
+            FROM om_columns
+            WHERE table_fqn IN ({placeholders})
+              AND list_contains(tags, 'PII.Sensitive')
+            """,
+            all_downstream,
+        )
+        pii_count = int(pii_df["n"].iloc[0]) if not pii_df.empty else 0
+
+    direct = len(direct_downstream)
+    transitive = len(all_downstream)
+    # Weighted score: direct deps count 1x, transitive 0.5x, PII downstream 2x.
+    # Keep the ceiling loose so values read intuitively (0-ish to ~20+).
+    impact = float(direct) + 0.5 * (transitive - direct) + 2.0 * pii_count
+    return {
+        "fqn": fqn,
+        "direct": direct,
+        "transitive": transitive,
+        "pii_downstream": pii_count,
+        "impact_score": round(impact, 2),
+        "downstream_fqns": all_downstream,
+    }
+
+
+def top_blast_radius(limit: int = 10) -> pd.DataFrame:
+    """Rank every table in the catalog by blast radius.
+
+    Useful for the viz tab and for dashboards — one pass over om_tables,
+    calls blast_radius() per FQN. N is small (dozens in a demo catalog),
+    so the per-table recursive query is fine.
+    """
+    try:
+        tables = duck.query("SELECT fullyQualifiedName AS fqn FROM om_tables")
+    except Exception:
+        return pd.DataFrame(
+            columns=["fqn", "direct", "transitive", "pii_downstream", "impact_score"]
+        )
+    rows = []
+    for fqn in tables["fqn"].tolist():
+        r = blast_radius(fqn)
+        rows.append(
+            {
+                "fqn": fqn,
+                "direct": r["direct"],
+                "transitive": r["transitive"],
+                "pii_downstream": r["pii_downstream"],
+                "impact_score": r["impact_score"],
+            }
+        )
+    df = pd.DataFrame(rows).sort_values("impact_score", ascending=False).head(limit)
+    return df.reset_index(drop=True)
+
+
 def tag_conflicts() -> pd.DataFrame:
     """Column names whose tag assignment varies across tables.
 
