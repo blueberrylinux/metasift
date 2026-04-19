@@ -11,6 +11,7 @@ import contextlib
 import html
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import streamlit as st
@@ -20,7 +21,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from app.clients import duck, openmetadata
 from app.config import settings
 from app.engines import agent as agent_mod
-from app.engines import analysis, cleaning, stewardship
+from app.engines import analysis, cleaning, report, stewardship
 from app.engines.stewardship import Suggestion
 
 _PII_TAG_OPTIONS = ["PII.Sensitive", "PII.NonSensitive", "PII.None"]
@@ -560,6 +561,30 @@ with st.sidebar:
     ):
         st.session_state.show_review = not in_review
         st.rerun()
+
+    # Executive report download. Generated eagerly on render (cheap — all
+    # in-memory SQL against DuckDB) so the download_button has the bytes
+    # ready on first click. Only offered once metadata is loaded, since an
+    # empty DuckDB would produce a report full of SQL error messages.
+    try:
+        has_metadata = bool(duck.query("SELECT 1 FROM om_tables LIMIT 1").size)
+    except Exception:
+        has_metadata = False
+
+    if has_metadata:
+        try:
+            report_md = report.generate_markdown_report()
+            fname = f"metasift-report-{datetime.now(UTC).strftime('%Y%m%d-%H%M')}.md"
+            st.download_button(
+                "📄 Export report",
+                data=report_md,
+                file_name=fname,
+                mime="text/markdown",
+                use_container_width=True,
+                help="Download a markdown summary of catalog health, stale docs, PII gaps, and more",
+            )
+        except Exception as e:
+            st.caption(f"_Report unavailable: {e}_")
 
     # Subtle status row at the bottom of the sidebar
     st.divider()
