@@ -377,6 +377,20 @@ _TASK_ROUTING_LABELS: dict[str, str] = {
 }
 
 
+# Opinionated one-click setup: paste an OpenRouter key and MetaSift auto-
+# configures the same hybrid routing the project uses in .env. Llama 3.3 70B
+# (paid, not the free tier) for everything except tool-calling, which routes
+# to gpt-4o-mini via OpenRouter for reliability. Keeps the demo fast without
+# paying free-tier rate-limit tax.
+_METASIFT_DEFAULTS = {
+    "base_url": "https://openrouter.ai/api/v1",
+    "shared_model": "meta-llama/llama-3.3-70b-instruct",
+    "per_task": {
+        "toolcall": "openai/gpt-4o-mini",
+    },
+}
+
+
 def _current_model_for_picker(override) -> str | None:
     """What the model picker should show as 'selected' given the override
     and the provider preset. Falls back to the preset's model hint when no
@@ -471,7 +485,7 @@ def _preset_for_url(base_url: str | None) -> str:
     return "Custom"
 
 
-@st.dialog("Use your own API key", width="medium")
+@st.dialog("LLM setup", width="medium")
 def _api_key_dialog() -> None:
     st.markdown(
         "MetaSift's LLM client works with any **OpenAI-compatible endpoint** — "
@@ -501,6 +515,39 @@ def _api_key_dialog() -> None:
         placeholder="sk-...",
         help="Your provider's API key. Never leaves this browser session.",
     )
+
+    # Quick-start shortcut — paste an OpenRouter key, click this button, get
+    # the hybrid Llama 3.3 + GPT-4o-mini setup that mirrors MetaSift's .env.
+    # Disabled until an API key is entered (OpenRouter keys start with `sk-or-`
+    # but we don't validate the prefix — any non-empty key is fine).
+    qs_label = "💫 Use MetaSift defaults — Llama 3.3 70B + GPT-4o-mini (tool-calling)"
+    qs_help = (
+        "One-click setup: configures OpenRouter + meta-llama/llama-3.3-70b-instruct "
+        "for most tasks, with openai/gpt-4o-mini routed for tool-calling. Mirrors "
+        "the production .env — the model combo MetaSift's developer ships with. "
+        "Overwrites whatever preset / URL / model you've picked above."
+    )
+    if st.button(
+        qs_label,
+        type="primary",
+        width="stretch",
+        disabled=not (api_key and api_key.strip()),
+        help=qs_help,
+    ):
+        llm.set_override(
+            api_key=api_key,
+            base_url=_METASIFT_DEFAULTS["base_url"],
+            model=_METASIFT_DEFAULTS["shared_model"],
+        )
+        for task, task_model in _METASIFT_DEFAULTS["per_task"].items():
+            llm.set_task_model(task, task_model)
+        # Pop widget-state for any stale per-task text inputs from a prior
+        # session so the re-opened modal shows the defaults we just applied.
+        for task in _TASK_ROUTING_LABELS:
+            if task not in _METASIFT_DEFAULTS["per_task"]:
+                st.session_state.pop(f"task_model__{task}", None)
+        st.session_state.show_api_key = False
+        st.rerun()
     base_url = st.text_input(
         "Base URL",
         value=(current.base_url if current and current.base_url else preset_config["base_url"]),
@@ -1192,12 +1239,13 @@ with st.sidebar:
     with kbtn:
         override_active = llm.get_override() is not None
         if st.button(
-            "🔑 API key" + (" ✓" if override_active else ""),
+            "🔑 LLM setup" + (" ✓" if override_active else ""),
             width="stretch",
             type="secondary",
             help=(
-                "Use your own OpenAI-compatible key (OpenRouter, OpenAI, Gemini, "
-                "Groq, Ollama, or custom). Session-scoped; never persisted."
+                "Bring your own key (OpenRouter, OpenAI, Gemini, Groq, Ollama, custom) "
+                "or apply MetaSift's defaults. Includes per-task model routing for "
+                "power users. Session-scoped; never persisted."
             ),
         ):
             st.session_state.show_api_key = True
