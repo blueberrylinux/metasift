@@ -623,10 +623,11 @@ def _api_key_dialog() -> None:
 
     st.caption(
         "💡 **Tool-calling reliability varies by model.** Best results with "
-        "`gpt-4o-mini`, `gemini-2.0-flash`, `claude-3.5-sonnet`, or `llama-3.3-70b-instruct`. "
-        "Smaller or older models (e.g. `llama-3.1-8b`) can loop on tool selection — "
-        "MetaSift's agent caps at 25 iterations so you'll see an error, not a frozen app, "
-        "but expect degraded chat quality."
+        "`gpt-4o-mini`, `gemini-2.0-flash`, or `claude-3.5-sonnet`. Open-weight "
+        "models (including `llama-3.3-70b-instruct` and smaller Llamas) can loop "
+        "on tool selection — MetaSift's agent caps at 25 iterations so you'll see "
+        "an error, not a frozen app, but expect degraded chat quality. Use those "
+        "for the cheap non-toolcall tasks via per-task routing instead."
     )
 
     with st.expander("⚙️ Advanced — per-task model routing", expanded=False):
