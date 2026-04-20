@@ -24,6 +24,17 @@ _SCHEMA_COLORS = {
 }
 _DEFAULT_COLOR = "#9ca3af"
 
+# Fix-type chip labels used by the DQ-failure viz. Mirrors
+# `tools._FIX_TYPE_CHIPS` (plain text vs markdown-code-wrapped) — keep both
+# tables in sync if you add a new fix_type value.
+_FIX_TYPE_CHIP_LABELS = {
+    "schema_change": "🔷 Schema change",
+    "etl_investigation": "🔍 ETL investigation",
+    "data_correction": "⚠️ Data correction",
+    "upstream_fix": "🔄 Upstream fix",
+    "other": "🛠 Other",
+}
+
 
 def _schema_of(fqn: str) -> str:
     parts = fqn.split(".")
@@ -588,7 +599,8 @@ def dq_failure_table() -> go.Figure | None:
                 COALESCE(f.result_message, '') AS result_message,
                 COALESCE(e.summary, '') AS summary,
                 COALESCE(e.likely_cause, '') AS likely_cause,
-                COALESCE(e.next_step, '') AS next_step
+                COALESCE(e.next_step, '') AS next_step,
+                COALESCE(e.fix_type, '') AS fix_type
             FROM om_test_cases f
             LEFT JOIN dq_explanations e ON e.test_id = f.id
             WHERE f.status = 'Failed'
@@ -606,7 +618,8 @@ def dq_failure_table() -> go.Figure | None:
                     COALESCE(result_message, '') AS result_message,
                     '' AS summary,
                     '' AS likely_cause,
-                    '' AS next_step
+                    '' AS next_step,
+                    '' AS fix_type
                 FROM om_test_cases
                 WHERE status = 'Failed'
                 ORDER BY table_fqn, name
@@ -622,9 +635,12 @@ def dq_failure_table() -> go.Figure | None:
     def _dash(v: str) -> str:
         return v.strip() if v and v.strip() else "—"
 
+    def _chip(v: str) -> str:
+        return _FIX_TYPE_CHIP_LABELS.get((v or "").strip().lower(), "—")
+
     fig = go.Figure(
         go.Table(
-            columnwidth=[80, 110, 70, 110, 180, 180, 180, 180],
+            columnwidth=[80, 110, 70, 110, 180, 180, 180, 100, 180],
             header={
                 "values": [
                     "<b>Test</b>",
@@ -634,7 +650,8 @@ def dq_failure_table() -> go.Figure | None:
                     "<b>Failure message</b>",
                     "<b>Summary</b>",
                     "<b>Likely cause</b>",
-                    "<b>Next step</b>",
+                    "<b>Fix type</b>",
+                    "<b>Suggested fix</b>",
                 ],
                 "fill_color": "#111827",
                 "font": {"color": "#f9fafb", "size": 12},
@@ -650,6 +667,7 @@ def dq_failure_table() -> go.Figure | None:
                     df["result_message"],
                     [_dash(s) for s in df["summary"]],
                     [_dash(c) for c in df["likely_cause"]],
+                    [_chip(t) for t in df["fix_type"]],
                     [_dash(n) for n in df["next_step"]],
                 ],
                 "fill_color": [["#1f2937" if i % 2 else "#111827" for i in range(len(df))]],

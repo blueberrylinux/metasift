@@ -525,6 +525,23 @@ def ownership_report() -> str:
 _SEVERITY_EMOJI = {"critical": "🚨", "recommended": "💡", "nice-to-have": "✨"}
 
 
+# Fix-type chips for DQ failure explanations — mirror viz.dq_failure_table's
+# `_FIX_CHIP` table. Defined here so tool markdown output stays in sync with
+# the dashboard's visual labels.
+_FIX_TYPE_CHIPS = {
+    "schema_change": "`🔷 schema change`",
+    "etl_investigation": "`🔍 ETL investigation`",
+    "data_correction": "`⚠️ data correction`",
+    "upstream_fix": "`🔄 upstream fix`",
+    "other": "`🛠 other`",
+}
+
+
+def _fix_type_chip(fix_type: str) -> str:
+    """Return the markdown chip for a fix_type, or empty string if unknown."""
+    return _FIX_TYPE_CHIPS.get((fix_type or "").strip().lower(), "")
+
+
 def _render_dq_recommendation(r, *, include_table: bool = False) -> list[str]:
     """Shared formatter for both on-demand and cached DQ recommendations."""
     emoji = _SEVERITY_EMOJI.get(str(r.get("severity") or "").lower(), "💡")
@@ -826,7 +843,7 @@ def dq_failures_summary(schema_name: str = "") -> str:
         if failures.empty:
             return f"No failing DQ checks in schema `{schema_name}`."
 
-    # Left-join to dq_explanations so we carry summary/cause/next_step inline
+    # Left-join to dq_explanations so we carry summary/cause/fix inline
     # when available. Fall back to raw failures if the explanation cache
     # hasn't been populated yet.
     have_explanations = False
@@ -838,12 +855,22 @@ def dq_failures_summary(schema_name: str = "") -> str:
 
     explanations: dict[str, dict] = {}
     if have_explanations:
-        exp_df = duck.query("SELECT test_id, summary, likely_cause, next_step FROM dq_explanations")
+        try:
+            exp_df = duck.query(
+                "SELECT test_id, summary, likely_cause, next_step, fix_type FROM dq_explanations"
+            )
+        except Exception:
+            # Cache exists from an older schema without fix_type — read what we can.
+            exp_df = duck.query(
+                "SELECT test_id, summary, likely_cause, next_step FROM dq_explanations"
+            )
+            exp_df["fix_type"] = ""
         for _, r in exp_df.iterrows():
             explanations[str(r["test_id"])] = {
                 "summary": _as_str(r["summary"]),
                 "likely_cause": _as_str(r["likely_cause"]),
                 "next_step": _as_str(r["next_step"]),
+                "fix_type": _as_str(r["fix_type"]),
             }
 
     lines: list[str] = [f"**{len(failures)} failing DQ check(s)**", ""]
@@ -858,13 +885,14 @@ def dq_failures_summary(schema_name: str = "") -> str:
         if exp:
             lines.append(f"- **Summary:** {exp['summary']}")
             lines.append(f"- **Likely cause:** {exp['likely_cause']}")
-            lines.append(f"- **Next step:** {exp['next_step']}")
+            chip = _fix_type_chip(exp.get("fix_type", ""))
+            lines.append(f"- **Suggested fix** {chip} {exp['next_step']}")
         lines.append("")
 
     if not have_explanations or not explanations:
         lines.append(
             "_Tip: click **🧪 Explain DQ failures** in the sidebar to get "
-            "plain-English summaries and next-step recommendations for each failure._"
+            "plain-English summaries and suggested fixes for each failure._"
         )
 
     return "\n".join(lines)
@@ -910,7 +938,8 @@ def dq_explain(fqn: str) -> str:
         )
         lines.append(f"- **Summary:** {exp.summary}")
         lines.append(f"- **Likely cause:** {exp.likely_cause}")
-        lines.append(f"- **Next step:** {exp.next_step}")
+        chip = _fix_type_chip(exp.fix_type)
+        lines.append(f"- **Suggested fix** {chip} {exp.next_step}")
         lines.append("")
 
     return "\n".join(lines)

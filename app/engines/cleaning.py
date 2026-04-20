@@ -675,17 +675,44 @@ class DQExplanation:
     summary: str
     likely_cause: str
     next_step: str
+    fix_type: str = (
+        "other"  # schema_change | etl_investigation | data_correction | upstream_fix | other
+    )
+
+
+# Allowed values for the fix_type classifier. Kept tight on purpose: each one
+# maps to a distinct steward workflow. `other` is the escape hatch for the
+# (rare) case where none cleanly applies.
+_FIX_TYPES = (
+    "schema_change",
+    "etl_investigation",
+    "data_correction",
+    "upstream_fix",
+    "other",
+)
 
 
 _DQ_PROMPT_TEMPLATE = (
     "You are a senior data engineer explaining a failed data quality check to a "
     "busy steward in plain English.\n\n"
-    "Return THREE short, specific paragraphs (one sentence each, no more than ~30 "
-    "words per paragraph):\n"
-    '- "summary": what the test checks and what the failure means for this table\n'
-    '- "likely_cause": the MOST plausible root cause given the test, parameters, '
-    "and the failing rows sample\n"
-    '- "next_step": one concrete action a steward or engineer should take first\n\n'
+    "Return FOUR fields:\n"
+    '- "summary" (one sentence, ~30 words): what the test checks and what the '
+    "failure means for this table\n"
+    '- "likely_cause" (one sentence, ~30 words): the MOST plausible root cause '
+    "given the test, parameters, and the failing rows sample\n"
+    '- "next_step" (one sentence, ~30 words): one concrete action a steward or '
+    "engineer should take first — framed as a fix, not a diagnostic step\n"
+    '- "fix_type" (single word, one of EXACTLY these values): classifies the '
+    "next_step into a workflow bucket:\n"
+    '    * "schema_change" — needs DDL/migration (e.g. add NOT NULL, add '
+    "constraint, change type)\n"
+    '    * "etl_investigation" — needs a dig into the pipeline/job that '
+    "produces this data\n"
+    '    * "data_correction" — needs a one-off cleanup of existing rows '
+    "(backfill, dedupe, delete)\n"
+    '    * "upstream_fix" — needs a change at the source system (app code, '
+    "form validation, producer)\n"
+    '    * "other" — if genuinely none of the above\n\n'
     "Ground every claim in the supplied evidence. Do NOT invent numbers, column "
     "names, or upstream systems that aren't in the input. If evidence is thin, "
     "say so rather than guessing.\n\n"
@@ -700,7 +727,7 @@ _DQ_PROMPT_TEMPLATE = (
     "  Failure message: {result_message}\n"
     "  Sample failing rows: {failed_sample}\n\n"
     "Respond with ONLY a JSON object (no prose, no code fences):\n"
-    '{{"summary": str, "likely_cause": str, "next_step": str}}'
+    '{{"summary": str, "likely_cause": str, "next_step": str, "fix_type": str}}'
 )
 
 
@@ -750,7 +777,14 @@ def explain_dq_failure(row: dict) -> DQExplanation:
             "summary": row.get("result_message") or "Test failed.",
             "likely_cause": "Explanation unavailable — couldn't parse LLM response.",
             "next_step": "Inspect the failing rows sample in OpenMetadata directly.",
+            "fix_type": "other",
         }
+
+    # Normalise fix_type to the allowlist; anything unexpected becomes "other"
+    # so downstream rendering never has to guess at colors / chips.
+    fix_type = str(parsed.get("fix_type") or "other").strip().lower()
+    if fix_type not in _FIX_TYPES:
+        fix_type = "other"
 
     return DQExplanation(
         test_id=str(row.get("test_id") or ""),
@@ -760,6 +794,7 @@ def explain_dq_failure(row: dict) -> DQExplanation:
         summary=str(parsed.get("summary") or "").strip(),
         likely_cause=str(parsed.get("likely_cause") or "").strip(),
         next_step=str(parsed.get("next_step") or "").strip(),
+        fix_type=fix_type,
     )
 
 
@@ -788,7 +823,8 @@ def run_dq_explanations(progress_cb=None) -> dict[str, int]:
             column_name VARCHAR,
             summary VARCHAR,
             likely_cause VARCHAR,
-            next_step VARCHAR
+            next_step VARCHAR,
+            fix_type VARCHAR
         )
     """)
 
@@ -799,7 +835,7 @@ def run_dq_explanations(progress_cb=None) -> dict[str, int]:
         try:
             exp = explain_dq_failure(row.to_dict())
             conn.execute(
-                "INSERT INTO dq_explanations VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO dq_explanations VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     exp.test_id,
                     exp.test_name,
@@ -808,6 +844,7 @@ def run_dq_explanations(progress_cb=None) -> dict[str, int]:
                     exp.summary,
                     exp.likely_cause,
                     exp.next_step,
+                    exp.fix_type,
                 ],
             )
             explained += 1
