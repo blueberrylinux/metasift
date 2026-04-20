@@ -435,9 +435,13 @@ def _model_picker_bar() -> None:
     else:
         effective = picked
 
-    # Apply only if the model actually changed — avoids re-running the same
-    # override on every rerun, which would invalidate the lru_cache each time.
-    if effective != current:
+    # Apply only when the user has settled on a concrete model that differs
+    # from what's currently active. Treating `effective=None` as "no change"
+    # is load-bearing: when the user selects "Other…" but hasn't typed yet,
+    # `effective` is None while `current` is the preset hint — without this
+    # guard we'd set_model(None), rerun, recompute `current` from the hint,
+    # and loop indefinitely (thrashing get_llm.cache_clear on every pass).
+    if effective and effective != current:
         llm.set_model(effective)
         st.rerun()
 
