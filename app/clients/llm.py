@@ -30,11 +30,20 @@ class LLMOverride:
     """Runtime override set by the UI. Every field is optional — each one that
     isn't set falls back to .env-configured defaults. `api_key=None` means
     "keep using the .env key but swap another field" (useful for model-only
-    changes from the chat-area model picker)."""
+    changes from the chat-area model picker).
+
+    `per_task_models` is the power-user surface: it maps a TaskType to a
+    specific model that overrides `model` for that task only. Resolution
+    precedence when building a client for a given task:
+        per_task_models[task]  →  model (shared)  →  .env per-task default
+    """
 
     api_key: str | None = None
     base_url: str | None = None  # falls back to settings.openrouter_base_url
-    model: str | None = None  # falls back to the per-task model from .env
+    model: str | None = (
+        None  # shared model — applies to every task unless per_task_models overrides
+    )
+    per_task_models: tuple[tuple[str, str], ...] = ()  # frozen tuple-of-pairs for hashability
 
 
 # Module-level singleton set by set_override() / clear_override(). Read by
@@ -44,43 +53,97 @@ class LLMOverride:
 _override: LLMOverride | None = None
 
 
+def _clean(v: str | None) -> str | None:
+    return (v or "").strip() or None
+
+
 def set_override(
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
 ) -> None:
-    """Activate a runtime override. Any field left as None is cleared from the
-    override (falls back to .env config on next resolution). Invalidates the
-    get_llm() cache so every subsequent call rebuilds with the new values."""
+    """Activate a runtime override for the shared credentials + shared model.
+    Any field left as None is cleared from the override (falls back to .env
+    config on next resolution). Invalidates the get_llm() cache.
+
+    Preserves any previously-configured per-task models — users who change
+    the shared key/URL shouldn't silently lose their per-task routing. Use
+    `clear_per_task_models()` or `clear_override()` to wipe per-task state."""
     global _override
-
-    def _clean(v: str | None) -> str | None:
-        return (v or "").strip() or None
-
+    current = _override
     _override = LLMOverride(
         api_key=_clean(api_key),
         base_url=_clean(base_url),
         model=_clean(model),
+        per_task_models=current.per_task_models if current else (),
+    )
+    get_llm.cache_clear()
+
+
+def clear_per_task_models() -> None:
+    """Wipe every per-task override, keep the shared credentials intact."""
+    global _override
+    if _override is None:
+        return
+    _override = LLMOverride(
+        api_key=_override.api_key,
+        base_url=_override.base_url,
+        model=_override.model,
+        per_task_models=(),
     )
     get_llm.cache_clear()
 
 
 def set_model(model: str | None) -> None:
-    """Update just the model; preserve whatever api_key / base_url the current
-    override has. Useful for a chat-area model picker that shouldn't require
+    """Update just the shared model; preserve api_key / base_url / per-task
+    routing. Useful for a chat-area model picker that shouldn't require
     re-pasting the API key to swap models."""
     global _override
     current = _override or LLMOverride()
     _override = LLMOverride(
         api_key=current.api_key,
         base_url=current.base_url,
-        model=(model or "").strip() or None,
+        model=_clean(model),
+        per_task_models=current.per_task_models,
     )
     get_llm.cache_clear()
 
 
+def set_task_model(task: TaskType, model: str | None) -> None:
+    """Set (or clear, when model is None/empty) a per-task model override.
+    Preserves every other field of the current override including other
+    task entries."""
+    global _override
+    current = _override or LLMOverride()
+    cleaned = _clean(model)
+    # Rebuild the per-task mapping as a new tuple — drop the entry when
+    # cleared, add/replace when set. Keeps the frozen dataclass hashable.
+    existing = {k: v for k, v in current.per_task_models if k != task}
+    if cleaned:
+        existing[task] = cleaned
+    new_pairs = tuple(sorted(existing.items()))
+    _override = LLMOverride(
+        api_key=current.api_key,
+        base_url=current.base_url,
+        model=current.model,
+        per_task_models=new_pairs,
+    )
+    get_llm.cache_clear()
+
+
+def get_task_model(task: TaskType) -> str | None:
+    """Return the per-task model override for this task, or None if none set."""
+    if _override is None:
+        return None
+    for k, v in _override.per_task_models:
+        if k == task:
+            return v
+    return None
+
+
 def clear_override() -> None:
-    """Drop the runtime override; get_llm() returns to .env-configured defaults."""
+    """Drop the runtime override entirely (including per-task routing);
+    get_llm() returns to .env-configured defaults."""
     global _override
     _override = None
     get_llm.cache_clear()
@@ -91,14 +154,24 @@ def get_override() -> LLMOverride | None:
     return _override
 
 
-def _build(model_name: str) -> BaseChatModel:
+def _build(task: TaskType, env_default_model: str) -> BaseChatModel:
     """Construct a ChatOpenAI client — merges the runtime override with .env
-    defaults, per field. Callers get override values where set and .env
-    defaults where not. Raises if NO key is available from either source."""
+    defaults, per field. Resolution precedence for the model:
+        per_task_models[task]  →  override.model (shared)  →  env_default_model
+
+    Callers get override values where set and .env defaults where not.
+    Raises if NO api_key is available from either source."""
     o = _override
     api_key = o.api_key if o and o.api_key else settings.openrouter_api_key
     base_url = o.base_url if o and o.base_url else settings.openrouter_base_url
-    model = o.model if o and o.model else model_name
+
+    model = env_default_model
+    if o is not None:
+        per_task = next((v for k, v in o.per_task_models if k == task), None)
+        if per_task:
+            model = per_task
+        elif o.model:
+            model = o.model
 
     if not api_key:
         # Same error shape as settings.require_llm_key() — caller catches this
@@ -130,7 +203,8 @@ def get_llm(task: TaskType = "toolcall") -> BaseChatModel:
     """Return a configured chat model for a given task type.
 
     Cached so the same task reuses the same client. The cache is cleared by
-    `set_override()` / `clear_override()` so credential changes take effect
-    on the next call without a process restart.
+    `set_override()` / `set_model()` / `set_task_model()` / `clear_override()`
+    so credential changes take effect on the next call without a process
+    restart.
     """
-    return _build(_TASK_MAP[task]())
+    return _build(task, _TASK_MAP[task]())

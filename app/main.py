@@ -365,6 +365,18 @@ _MODEL_CATALOG: dict[str, list[str]] = {
 _CUSTOM_MODEL_SENTINEL = "Other — type a custom model id"
 
 
+# One-line description per task type, rendered in the Advanced expander so
+# power users understand what each per-task override actually routes.
+_TASK_ROUTING_LABELS: dict[str, str] = {
+    "toolcall": "Stew's tool-calling — agent picks which tool to invoke",
+    "reasoning": "Complex analysis — DQ explanations, failure root-cause",
+    "description": "Generating new table descriptions",
+    "stale": "Stale-description detection (compares desc vs columns)",
+    "scoring": "Description quality scoring (1–5)",
+    "classification": "PII classification fallback (when heuristic misses)",
+}
+
+
 def _current_model_for_picker(override) -> str | None:
     """What the model picker should show as 'selected' given the override
     and the provider preset. Falls back to the preset's model hint when no
@@ -505,6 +517,60 @@ def _api_key_dialog() -> None:
         ),
     )
 
+    st.caption(
+        "💡 **Tool-calling reliability varies by model.** Best results with "
+        "`gpt-4o-mini`, `gemini-2.0-flash`, `claude-3.5-sonnet`, or `llama-3.3-70b-instruct`. "
+        "Smaller or older models (e.g. `llama-3.1-8b`) can loop on tool selection — "
+        "MetaSift's agent caps at 25 iterations so you'll see an error, not a frozen app, "
+        "but expect degraded chat quality."
+    )
+
+    with st.expander("⚙️ Advanced — per-task model routing", expanded=False):
+        st.caption(
+            "Route individual agent tasks to different models. Leave a row blank to use "
+            "the shared model above. Handy for pairing a fast cheap model for tool-calling "
+            "with a stronger model for reasoning-heavy tasks (DQ explanations, "
+            "test recommendations)."
+        )
+        for task, description in _TASK_ROUTING_LABELS.items():
+            current_task_model = llm.get_task_model(task) if current else None
+            col_label, col_input = st.columns([2, 3])
+            with col_label:
+                st.markdown(
+                    f"<div style='padding-top: 0.4rem; font-size: 0.85rem;'>"
+                    f"<b>{task}</b><br>"
+                    f"<span style='opacity: 0.6; font-size: 0.75rem;'>{description}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with col_input:
+                new_task_model = st.text_input(
+                    task,
+                    value=current_task_model or "",
+                    placeholder="(same as shared model)",
+                    label_visibility="collapsed",
+                    key=f"task_model__{task}",
+                )
+                new_clean = (new_task_model or "").strip() or None
+                if new_clean != current_task_model:
+                    llm.set_task_model(task, new_clean)
+                    st.rerun()
+
+        if current and current.per_task_models:
+            st.divider()
+            if st.button(
+                "Reset per-task routing",
+                help="Clear every per-task override — shared model applies to all tasks.",
+            ):
+                llm.clear_per_task_models()
+                # Widget session-state keys persist across reruns independent of
+                # _override — pop them so the text_inputs re-initialize to empty
+                # instead of echoing the old values back into set_task_model on
+                # the next render.
+                for task in _TASK_ROUTING_LABELS:
+                    st.session_state.pop(f"task_model__{task}", None)
+                st.rerun()
+
     st.divider()
 
     status_col, clear_col, apply_col = st.columns([3, 1, 1])
@@ -523,6 +589,10 @@ def _api_key_dialog() -> None:
             help="Drop the override and go back to `.env` defaults.",
         ):
             llm.clear_override()
+            # Also wipe the per-task text_input widget state so reopening the
+            # modal doesn't echo stale values back into set_task_model.
+            for task in _TASK_ROUTING_LABELS:
+                st.session_state.pop(f"task_model__{task}", None)
             st.session_state.show_api_key = False
             st.rerun()
     with apply_col:
