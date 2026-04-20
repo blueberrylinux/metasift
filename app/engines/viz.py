@@ -531,9 +531,7 @@ def quality_by_table() -> go.Figure | None:
 
     hover = [
         f"<b>{sl}</b><br>Score: {int(s)}/5<br><br>{_fmt_rationale(r)}"
-        for sl, s, r in zip(
-            short_labels, df["quality_score"], df["quality_rationale"], strict=True
-        )
+        for sl, s, r in zip(short_labels, df["quality_score"], df["quality_rationale"], strict=True)
     ]
 
     fig = go.Figure(
@@ -569,6 +567,295 @@ def quality_by_table() -> go.Figure | None:
     return fig
 
 
+# ── 7. DQ failure explanations ──────────────────────────────────────────────
+
+
+def dq_failure_table() -> go.Figure | None:
+    """Failing DQ tests joined with their LLM-written plain-English explanations.
+
+    Rendered as a plotly Table so stewards can scan failures alongside the
+    summary / likely cause / next-step guidance without clicking into each
+    row. Missing explanation rows (user hasn't run the Explain DQ scan yet)
+    render as "—" placeholders so the failure list still shows up.
+    """
+    try:
+        df = duck.query("""
+            SELECT
+                COALESCE(f.test_name, '') AS test_name,
+                COALESCE(f.table_fqn, '') AS table_fqn,
+                COALESCE(f.column_name, '') AS column_name,
+                COALESCE(f.test_definition_name, '') AS test_definition,
+                COALESCE(f.result_message, '') AS result_message,
+                COALESCE(e.summary, '') AS summary,
+                COALESCE(e.likely_cause, '') AS likely_cause,
+                COALESCE(e.next_step, '') AS next_step
+            FROM om_test_cases f
+            LEFT JOIN dq_explanations e ON e.test_id = f.id
+            WHERE f.status = 'Failed'
+            ORDER BY f.table_fqn, f.name
+        """)
+    except Exception:
+        # dq_explanations may not exist yet — fall back to failures-only.
+        try:
+            df = duck.query("""
+                SELECT
+                    COALESCE(test_name, '') AS test_name,
+                    COALESCE(table_fqn, '') AS table_fqn,
+                    COALESCE(column_name, '') AS column_name,
+                    COALESCE(test_definition_name, '') AS test_definition,
+                    COALESCE(result_message, '') AS result_message,
+                    '' AS summary,
+                    '' AS likely_cause,
+                    '' AS next_step
+                FROM om_test_cases
+                WHERE status = 'Failed'
+                ORDER BY table_fqn, name
+            """)
+        except Exception:
+            return None
+    if df.empty:
+        return None
+
+    def _short(f: str) -> str:
+        return ".".join(f.split(".")[-2:]) if f else ""
+
+    def _dash(v: str) -> str:
+        return v.strip() if v and v.strip() else "—"
+
+    fig = go.Figure(
+        go.Table(
+            columnwidth=[80, 110, 70, 110, 180, 180, 180, 180],
+            header={
+                "values": [
+                    "<b>Test</b>",
+                    "<b>Table</b>",
+                    "<b>Column</b>",
+                    "<b>Definition</b>",
+                    "<b>Failure message</b>",
+                    "<b>Summary</b>",
+                    "<b>Likely cause</b>",
+                    "<b>Next step</b>",
+                ],
+                "fill_color": "#111827",
+                "font": {"color": "#f9fafb", "size": 12},
+                "align": "left",
+                "height": 30,
+            },
+            cells={
+                "values": [
+                    df["test_name"],
+                    [_short(f) for f in df["table_fqn"]],
+                    [_dash(c) for c in df["column_name"]],
+                    df["test_definition"],
+                    df["result_message"],
+                    [_dash(s) for s in df["summary"]],
+                    [_dash(c) for c in df["likely_cause"]],
+                    [_dash(n) for n in df["next_step"]],
+                ],
+                "fill_color": [["#1f2937" if i % 2 else "#111827" for i in range(len(df))]],
+                "font": {"color": "#e5e7eb", "size": 11},
+                "align": "left",
+                "height": 64,
+            },
+        )
+    )
+    explained = int((df["summary"].str.strip() != "").sum())
+    fig.update_layout(
+        height=max(240, 80 * len(df) + 120),
+        margin={"t": 60, "b": 20, "l": 10, "r": 10},
+        title=(
+            f"Failing DQ checks — {len(df)} total · {explained} explained "
+            f"(click 🧪 Explain DQ in the sidebar to fill in the rest)"
+        ),
+    )
+    return fig
+
+
+# ── 8. DQ recommendation gaps ───────────────────────────────────────────────
+
+
+def dq_recommendations_table() -> go.Figure | None:
+    """Recommended DQ tests that don't exist yet, grouped by severity.
+
+    Reads from the `dq_recommendations` cache populated by the "Recommend DQ
+    tests" sidebar button. Shows table, column, test definition, severity,
+    and rationale in a sortable plotly Table.
+    """
+    try:
+        df = duck.query("""
+            SELECT
+                table_fqn,
+                COALESCE(column_name, '(table-level)') AS column_name,
+                test_definition,
+                COALESCE(parameters, '[]') AS parameters,
+                COALESCE(severity, 'recommended') AS severity,
+                COALESCE(rationale, '') AS rationale
+            FROM dq_recommendations
+            ORDER BY
+                CASE severity
+                    WHEN 'critical' THEN 0
+                    WHEN 'recommended' THEN 1
+                    ELSE 2
+                END,
+                table_fqn,
+                column_name
+        """)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+
+    def _short(f: str) -> str:
+        return ".".join(f.split(".")[-2:]) if f else ""
+
+    severity_color = {
+        "critical": "#7f1d1d",
+        "recommended": "#854d0e",
+        "nice-to-have": "#14532d",
+    }
+    row_fill = [severity_color.get(s, "#1f2937") for s in df["severity"]]
+
+    severity_label = {
+        "critical": "🚨 Critical",
+        "recommended": "💡 Recommended",
+        "nice-to-have": "✨ Nice-to-have",
+    }
+
+    fig = go.Figure(
+        go.Table(
+            columnwidth=[110, 90, 130, 100, 100, 220],
+            header={
+                "values": [
+                    "<b>Table</b>",
+                    "<b>Column</b>",
+                    "<b>Test definition</b>",
+                    "<b>Parameters</b>",
+                    "<b>Severity</b>",
+                    "<b>Rationale</b>",
+                ],
+                "fill_color": "#111827",
+                "font": {"color": "#f9fafb", "size": 12},
+                "align": "left",
+                "height": 30,
+            },
+            cells={
+                "values": [
+                    [_short(f) for f in df["table_fqn"]],
+                    df["column_name"],
+                    df["test_definition"],
+                    df["parameters"],
+                    [severity_label.get(s, s) for s in df["severity"]],
+                    df["rationale"],
+                ],
+                "fill_color": [row_fill],
+                "font": {"color": "#f9fafb", "size": 11},
+                "align": "left",
+                "height": 56,
+            },
+        )
+    )
+    counts = df["severity"].value_counts().to_dict()
+    fig.update_layout(
+        height=max(260, 64 * len(df) + 120),
+        margin={"t": 60, "b": 20, "l": 10, "r": 10},
+        title=(
+            f"DQ recommendation gaps — {len(df)} total · "
+            f"{counts.get('critical', 0)} critical · "
+            f"{counts.get('recommended', 0)} recommended · "
+            f"{counts.get('nice-to-have', 0)} nice-to-have"
+        ),
+    )
+    return fig
+
+
+# ── 9. DQ × lineage risk ranking ────────────────────────────────────────────
+
+
+def dq_risk_bars() -> go.Figure | None:
+    """Horizontal bars ranking tables by DQ risk (failures × downstream weight).
+
+    The risk score is zero when either side is zero — tables here all have
+    at least one failing DQ test AND at least one downstream dependent.
+    Bar color darkens with PII-downstream count so sensitive blast radii
+    jump out visually.
+    """
+    try:
+        df = analysis.dq_risk_ranking(limit=15)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+
+    short_labels = [_short_of(f) for f in df["fqn"]]
+
+    # PII-aware color ramp: more downstream PII → more saturated red.
+    max_pii = max(int(df["pii_downstream"].max() or 1), 1)
+
+    def _color(pii: int) -> str:
+        # Blend from amber (#f59e0b) → red (#dc2626) as pii_downstream grows.
+        t = min(pii / max_pii, 1.0)
+        r = int(245 + (220 - 245) * t)
+        g = int(158 + (38 - 158) * t)
+        b = int(11 + (38 - 11) * t)
+        return f"rgb({r},{g},{b})"
+
+    colors = [_color(int(v)) for v in df["pii_downstream"]]
+
+    hover = [
+        (
+            f"<b>{sl}</b><br>"
+            f"Failing tests: {int(ft)}<br>"
+            f"Direct dependents: {int(d)}<br>"
+            f"Transitive downstream: {int(t)}<br>"
+            f"Downstream with PII: {int(p)}<br>"
+            f"Risk score: {s}"
+        )
+        for sl, ft, d, t, p, s in zip(
+            short_labels,
+            df["failed_tests"],
+            df["direct"],
+            df["transitive"],
+            df["pii_downstream"],
+            df["risk_score"],
+            strict=True,
+        )
+    ]
+
+    fig = go.Figure(
+        go.Bar(
+            y=short_labels,
+            x=df["risk_score"],
+            orientation="h",
+            marker={"color": colors},
+            text=[
+                f"{s} · {int(ft)}× failing, {int(t)} downstream, {int(p)} PII"
+                for s, ft, t, p in zip(
+                    df["risk_score"],
+                    df["failed_tests"],
+                    df["transitive"],
+                    df["pii_downstream"],
+                    strict=True,
+                )
+            ],
+            textposition="outside",
+            hovertext=hover,
+            hoverinfo="text",
+        )
+    )
+    fig.update_layout(
+        height=max(320, 34 * len(df) + 120),
+        margin={"t": 70, "b": 40, "l": 180, "r": 120},
+        title=(
+            "DQ risk — tables ranked by failures × downstream impact "
+            f"({len(df)} at-risk table(s) · color intensifies with PII-downstream count)"
+        ),
+        xaxis={"title": "Risk score (failed_tests × (direct + 0.5·transitive + 2·pii_downstream))"},
+        yaxis={"autorange": "reversed"},
+        showlegend=False,
+    )
+    return fig
+
+
 # ── Registry (kept flat so main.py can just iterate) ────────────────────────
 
 ALL_VIZ: list[tuple[str, str, callable]] = [
@@ -579,6 +866,21 @@ ALL_VIZ: list[tuple[str, str, callable]] = [
     ("🗺️ Catalog map", "treemap by schema / table / PII share", catalog_treemap),
     ("🔥 Tag conflicts", "column × table → tag heatmap", tag_conflict_heatmap),
     ("📈 Quality", "per-table description scores with LLM rationale on hover", quality_by_table),
+    (
+        "🧪 DQ failures",
+        "failed data quality checks with LLM-written plain-English explanations",
+        dq_failure_table,
+    ),
+    (
+        "💡 DQ gaps",
+        "recommended data quality tests that should exist but currently don't",
+        dq_recommendations_table,
+    ),
+    (
+        "🎯 DQ risk",
+        "failing DQ tests ranked by downstream blast radius (PII-weighted)",
+        dq_risk_bars,
+    ),
 ]
 
 

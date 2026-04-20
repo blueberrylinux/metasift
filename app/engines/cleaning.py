@@ -48,7 +48,7 @@ def _build_stale_prompt(fqn: str, description: str, col_summary: str) -> str:
         "  Columns: refund_id (BIGINT), order_id (BIGINT), reason_code (STRING), "
         "refunded_at (TIMESTAMP)\n"
         '  Verdict: {"stale": true, "reason": "description claims sales aggregates '
-        'by region/product but columns describe individual refund events — no region, '
+        "by region/product but columns describe individual refund events — no region, "
         'product, or aggregation", "corrected": "Refund events — one row per refund, '
         'linked to the originating order and reason code.", "confidence": 0.95}\n\n'
         "Example 2 — STALE (placeholder):\n"
@@ -100,8 +100,7 @@ def detect_stale(fqn: str, current_description: str, columns: list[dict]) -> Sta
     if parsed is None:
         logger.warning(f"Stale JSON malformed for {fqn}, retrying with strict mode")
         retry_prompt = (
-            prompt
-            + "\n\nYour previous response was not valid JSON. Return ONLY the JSON "
+            prompt + "\n\nYour previous response was not valid JSON. Return ONLY the JSON "
             "object — no prose, no code fences. Every field must have a value."
         )
         retry = llm.invoke(retry_prompt)
@@ -656,3 +655,164 @@ def run_pii_scan(use_llm_fallback: bool = False) -> dict[str, int]:
         f"{counts['gaps']} gaps (missing tag)"
     )
     return counts
+
+
+# ── Data quality failure explanations ──────────────────────────────────────────
+#
+# Turns a raw DQ test failure (status, result message, parameters, a few
+# sample failing rows) into a plain-English summary + root-cause hypothesis
+# + recommended next step. LLM-powered because the failure messages are
+# terse and generic; a human steward's time is better spent on the fix than
+# on deciphering `"columnValuesToBeUnique failed with 12 duplicates"`.
+
+
+@dataclass
+class DQExplanation:
+    test_id: str
+    test_name: str
+    table_fqn: str
+    column_name: str | None
+    summary: str
+    likely_cause: str
+    next_step: str
+
+
+_DQ_PROMPT_TEMPLATE = (
+    "You are a senior data engineer explaining a failed data quality check to a "
+    "busy steward in plain English.\n\n"
+    "Return THREE short, specific paragraphs (one sentence each, no more than ~30 "
+    "words per paragraph):\n"
+    '- "summary": what the test checks and what the failure means for this table\n'
+    '- "likely_cause": the MOST plausible root cause given the test, parameters, '
+    "and the failing rows sample\n"
+    '- "next_step": one concrete action a steward or engineer should take first\n\n'
+    "Ground every claim in the supplied evidence. Do NOT invent numbers, column "
+    "names, or upstream systems that aren't in the input. If evidence is thin, "
+    "say so rather than guessing.\n\n"
+    "Evidence:\n"
+    "  Table: {table_fqn}\n"
+    "  Table description: {table_description}\n"
+    "  Column: {column_name}\n"
+    "  Test name: {test_name}\n"
+    "  Test definition: {test_definition}\n"
+    "  Test description: {test_description}\n"
+    "  Parameters: {parameters}\n"
+    "  Failure message: {result_message}\n"
+    "  Sample failing rows: {failed_sample}\n\n"
+    "Respond with ONLY a JSON object (no prose, no code fences):\n"
+    '{{"summary": str, "likely_cause": str, "next_step": str}}'
+)
+
+
+def _parse_dq_json(text: str) -> dict | None:
+    cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+
+
+def explain_dq_failure(row: dict) -> DQExplanation:
+    """Turn a single failed DQ test row into a plain-English explanation.
+
+    Expects the dict shape produced by `analysis.dq_failures()`. Retries once
+    on malformed JSON; if both attempts fail the explanation falls back to
+    echoing the result message so the caller still gets a displayable row.
+    """
+    llm = get_llm("reasoning")
+    prompt = _DQ_PROMPT_TEMPLATE.format(
+        table_fqn=row.get("table_fqn") or "",
+        table_description=(row.get("table_description") or "(no description)")[:400],
+        column_name=row.get("column_name") or "(table-level test)",
+        test_name=row.get("test_name") or "",
+        test_definition=row.get("test_definition_name") or "",
+        test_description=(row.get("test_description") or "")[:300],
+        parameters=row.get("parameter_values") or "[]",
+        result_message=(row.get("result_message") or "")[:500],
+        failed_sample=(row.get("failed_rows_sample") or "[]")[:500],
+    )
+
+    result = llm.invoke(prompt)
+    text = result.content if hasattr(result, "content") else str(result)
+    parsed = _parse_dq_json(text)
+
+    if parsed is None:
+        retry = llm.invoke(
+            prompt + "\n\nYour previous response was not valid JSON. Return ONLY the JSON "
+            "object — no prose, no code fences. Every field must have a value."
+        )
+        text = retry.content if hasattr(retry, "content") else str(retry)
+        parsed = _parse_dq_json(text)
+
+    if parsed is None:
+        logger.warning(f"DQ explanation parse failed for {row.get('test_name')}: {text[:200]}")
+        parsed = {
+            "summary": row.get("result_message") or "Test failed.",
+            "likely_cause": "Explanation unavailable — couldn't parse LLM response.",
+            "next_step": "Inspect the failing rows sample in OpenMetadata directly.",
+        }
+
+    return DQExplanation(
+        test_id=str(row.get("test_id") or ""),
+        test_name=str(row.get("test_name") or ""),
+        table_fqn=str(row.get("table_fqn") or ""),
+        column_name=row.get("column_name"),
+        summary=str(parsed.get("summary") or "").strip(),
+        likely_cause=str(parsed.get("likely_cause") or "").strip(),
+        next_step=str(parsed.get("next_step") or "").strip(),
+    )
+
+
+def run_dq_explanations(progress_cb=None) -> dict[str, int]:
+    """Run explain_dq_failure on every failing test, persist to `dq_explanations`.
+
+    Args:
+        progress_cb: Optional callable(step:int, total:int, label:str).
+
+    Returns:
+        Summary dict with counts.
+    """
+    from app.engines import analysis
+
+    failures = analysis.dq_failures()
+    total = len(failures)
+    if total == 0:
+        return {"explained": 0, "total": 0}
+
+    conn = duck.get_conn()
+    conn.execute("""
+        CREATE OR REPLACE TABLE dq_explanations (
+            test_id VARCHAR PRIMARY KEY,
+            test_name VARCHAR,
+            table_fqn VARCHAR,
+            column_name VARCHAR,
+            summary VARCHAR,
+            likely_cause VARCHAR,
+            next_step VARCHAR
+        )
+    """)
+
+    explained = 0
+    for idx, (_, row) in enumerate(failures.iterrows(), start=1):
+        if progress_cb:
+            progress_cb(idx, total, f"Explaining: {row['test_name']}")
+        try:
+            exp = explain_dq_failure(row.to_dict())
+            conn.execute(
+                "INSERT INTO dq_explanations VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    exp.test_id,
+                    exp.test_name,
+                    exp.table_fqn,
+                    exp.column_name,
+                    exp.summary,
+                    exp.likely_cause,
+                    exp.next_step,
+                ],
+            )
+            explained += 1
+        except Exception as e:
+            logger.warning(f"DQ explanation failed for {row['test_name']}: {e}")
+
+    logger.info(f"DQ explanations done — {explained}/{total} failures explained.")
+    return {"explained": explained, "total": total}

@@ -175,6 +175,120 @@ def blast_radius(fqn: str, max_depth: int = 10) -> dict:
     }
 
 
+def dq_impact(fqn: str, max_depth: int = 10) -> dict:
+    """Compute the downstream blast radius of a table's CURRENTLY FAILING DQ tests.
+
+    A failing DQ test on `fqn` doesn't just taint `fqn` — it taints everything
+    downstream that reads from it. This joins:
+      - `om_test_cases` — how many tests on `fqn` are failing right now
+      - `om_lineage`     — transitive downstream tables
+      - `om_columns`     — which of those carry PII.Sensitive
+
+    Returns a dict that's safe to render directly:
+      - fqn, failed_tests, failing_test_names
+      - direct / transitive downstream counts
+      - pii_downstream       — downstream tables with ≥1 PII.Sensitive column
+      - downstream_fqns      — full list
+      - risk_score           — failed_tests × (direct + 0.5·transitive + 2·pii_downstream)
+        (zero when either side is zero; failures with no lineage = 0 risk,
+         lineage with no failures = 0 risk — the multiplier is intentional)
+    """
+    empty = {
+        "fqn": fqn,
+        "failed_tests": 0,
+        "failing_test_names": [],
+        "direct": 0,
+        "transitive": 0,
+        "pii_downstream": 0,
+        "downstream_fqns": [],
+        "risk_score": 0.0,
+    }
+    try:
+        fail_df = duck.query(
+            """
+            SELECT name, test_definition_name, column_name
+            FROM om_test_cases
+            WHERE table_fqn = ? AND status = 'Failed'
+            ORDER BY name
+            """,
+            [fqn],
+        )
+    except Exception:
+        return empty
+    if fail_df.empty:
+        return empty
+
+    # Reuse the existing weighted lineage routine — don't duplicate the
+    # recursive CTE or the PII-downstream query.
+    radius = blast_radius(fqn, max_depth=max_depth)
+    failed_tests = len(fail_df)
+    base = (
+        radius["direct"]
+        + 0.5 * (radius["transitive"] - radius["direct"])
+        + 2.0 * radius["pii_downstream"]
+    )
+    return {
+        "fqn": fqn,
+        "failed_tests": failed_tests,
+        "failing_test_names": fail_df["name"].tolist(),
+        "direct": radius["direct"],
+        "transitive": radius["transitive"],
+        "pii_downstream": radius["pii_downstream"],
+        "downstream_fqns": radius["downstream_fqns"],
+        "risk_score": round(failed_tests * base, 2),
+    }
+
+
+def dq_risk_ranking(limit: int = 20) -> pd.DataFrame:
+    """Rank every table that has at least one failing DQ test by risk score.
+
+    Risk score combines the number of failing tests on the table with the
+    weighted downstream footprint (PII-amplified). Useful for answering
+    _"where are broken data quality checks hurting the most?"_ in one query.
+
+    Returns columns: fqn, failed_tests, direct, transitive, pii_downstream,
+    risk_score — sorted desc. Empty frame if `om_test_cases` isn't loaded.
+    """
+    empty_cols = [
+        "fqn",
+        "failed_tests",
+        "direct",
+        "transitive",
+        "pii_downstream",
+        "risk_score",
+    ]
+    try:
+        tables = duck.query(
+            """
+            SELECT table_fqn AS fqn, COUNT(*) AS failed_tests
+            FROM om_test_cases
+            WHERE status = 'Failed' AND table_fqn IS NOT NULL
+            GROUP BY table_fqn
+            ORDER BY fqn
+            """
+        )
+    except Exception:
+        return pd.DataFrame(columns=empty_cols)
+    if tables.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    rows = []
+    for _, r in tables.iterrows():
+        impact = dq_impact(r["fqn"])
+        rows.append(
+            {
+                "fqn": r["fqn"],
+                "failed_tests": impact["failed_tests"],
+                "direct": impact["direct"],
+                "transitive": impact["transitive"],
+                "pii_downstream": impact["pii_downstream"],
+                "risk_score": impact["risk_score"],
+            }
+        )
+    df = pd.DataFrame(rows).sort_values(["risk_score", "failed_tests"], ascending=[False, False])
+    return df.head(limit).reset_index(drop=True)
+
+
 def top_blast_radius(limit: int = 10) -> pd.DataFrame:
     """Rank every table in the catalog by blast radius.
 
@@ -202,6 +316,83 @@ def top_blast_radius(limit: int = 10) -> pd.DataFrame:
         )
     df = pd.DataFrame(rows).sort_values("impact_score", ascending=False).head(limit)
     return df.reset_index(drop=True)
+
+
+def dq_failures() -> pd.DataFrame:
+    """Every DQ test whose latest result is `Failed`, one row per test.
+
+    Joined with om_tables so we can carry table description / column count
+    into the explanation prompt without a second query per failure.
+    """
+    try:
+        return duck.query("""
+            SELECT
+                tc.id AS test_id,
+                tc.name AS test_name,
+                tc.fqn AS test_fqn,
+                tc.table_fqn,
+                tc.column_name,
+                tc.test_definition_name,
+                tc.description AS test_description,
+                tc.parameter_values,
+                tc.status,
+                tc.result_message,
+                tc.result_timestamp,
+                tc.failed_rows_sample,
+                tc.source,
+                t.description AS table_description
+            FROM om_test_cases tc
+            LEFT JOIN om_tables t ON t.fullyQualifiedName = tc.table_fqn
+            WHERE tc.status = 'Failed'
+            ORDER BY tc.result_timestamp DESC NULLS LAST, tc.table_fqn, tc.name
+        """)
+    except Exception:
+        return pd.DataFrame(
+            columns=[
+                "test_id",
+                "test_name",
+                "test_fqn",
+                "table_fqn",
+                "column_name",
+                "test_definition_name",
+                "test_description",
+                "parameter_values",
+                "status",
+                "result_message",
+                "result_timestamp",
+                "failed_rows_sample",
+                "source",
+                "table_description",
+            ]
+        )
+
+
+def dq_summary() -> dict[str, int]:
+    """Headline counts for the DQ failure card."""
+    try:
+        df = duck.query("""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'Failed' THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN status = 'Success' THEN 1 ELSE 0 END) AS passed,
+                COUNT(DISTINCT table_fqn) FILTER (WHERE status = 'Failed') AS failing_tables
+            FROM om_test_cases
+        """)
+    except Exception:
+        return {"total": 0, "failed": 0, "passed": 0, "failing_tables": 0}
+    if df.empty:
+        return {"total": 0, "failed": 0, "passed": 0, "failing_tables": 0}
+    row = df.iloc[0]
+
+    def _int(v) -> int:
+        return 0 if pd.isna(v) else int(v)
+
+    return {
+        "total": _int(row["total"]),
+        "failed": _int(row["failed"]),
+        "passed": _int(row["passed"]),
+        "failing_tables": _int(row["failing_tables"]),
+    }
 
 
 def tag_conflicts() -> pd.DataFrame:

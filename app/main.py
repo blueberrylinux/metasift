@@ -676,6 +676,66 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"PII scan failed: {e}")
 
+    if st.button(
+        "💡 Recommend DQ tests",
+        use_container_width=True,
+        help="Suggest data quality tests every table should have but currently doesn't (LLM calls — one per table)",
+    ):
+        if not om_ok:
+            st.error("Start OpenMetadata first: `make stack-up`")
+        else:
+            progress = st.progress(0, text="Starting recommendations…")
+
+            def _tick_rec(step: int, total: int, label: str) -> None:
+                progress.progress(
+                    min(step / max(total, 1), 1.0),
+                    text=f"{label} ({step}/{total})",
+                )
+
+            try:
+                summary = stewardship.run_dq_recommendations(progress_cb=_tick_rec)
+                progress.empty()
+                if summary["total"] == 0:
+                    st.info("No DQ recommendations — coverage already looks solid.")
+                else:
+                    st.success(
+                        f"{summary['total']} recommendation(s) across {summary['analyzed']} "
+                        f"table(s) · 🚨 {summary['critical']} · 💡 {summary['recommended']} · "
+                        f"✨ {summary['nice']}"
+                    )
+                    st.rerun()
+            except Exception as e:
+                progress.empty()
+                st.error(f"DQ recommendations failed: {e}")
+
+    if st.button(
+        "🧪 Explain DQ failures",
+        use_container_width=True,
+        help="Generate plain-English explanations for every failed data quality check (LLM calls — one per failure)",
+    ):
+        if not om_ok:
+            st.error("Start OpenMetadata first: `make stack-up`")
+        else:
+            progress = st.progress(0, text="Starting DQ explanations…")
+
+            def _tick_dq(step: int, total: int, label: str) -> None:
+                progress.progress(
+                    min(step / max(total, 1), 1.0),
+                    text=f"{label} ({step}/{total})",
+                )
+
+            try:
+                summary = cleaning.run_dq_explanations(progress_cb=_tick_dq)
+                progress.empty()
+                if summary["total"] == 0:
+                    st.info("No failing DQ checks to explain.")
+                else:
+                    st.success(f"Explained {summary['explained']}/{summary['total']} DQ failures")
+                    st.rerun()
+            except Exception as e:
+                progress.empty()
+                st.error(f"DQ explanations failed: {e}")
+
     st.divider()
 
     # Review queue toggle. The label carries the pending count so users don't

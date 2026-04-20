@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import re
 from functools import lru_cache
+from pathlib import Path
 
 import duckdb
 import pandas as pd
@@ -59,6 +62,16 @@ def refresh_all() -> dict[str, int]:
     conn.execute("CREATE OR REPLACE TABLE om_lineage AS SELECT * FROM lineage_df")
     counts["om_lineage"] = len(lineage_df)
 
+    # Data quality test cases + latest results. Optional — catalog may have none.
+    # Falls back to a committed demo fixture so the DQ-explanation feature
+    # has real failures to work with when the OM DQ API is empty.
+    test_rows = _fetch_test_cases(http)
+    if not test_rows:
+        test_rows = _load_synthetic_test_cases()
+    tests_df = pd.DataFrame(test_rows, columns=_TEST_CASE_COLUMNS)
+    conn.execute("CREATE OR REPLACE TABLE om_test_cases AS SELECT * FROM tests_df")
+    counts["om_test_cases"] = len(tests_df)
+
     logger.info(f"DuckDB refresh complete: {counts}")
     return counts
 
@@ -103,6 +116,110 @@ def _fetch_lineage_edges(http, tables: list[dict]) -> list[dict]:
             if src and dst and (src, dst) not in seen:
                 seen.add((src, dst))
                 rows.append({"source_fqn": src, "target_fqn": dst})
+    return rows
+
+
+_TEST_CASE_COLUMNS = [
+    "id",
+    "name",
+    "fqn",
+    "table_fqn",
+    "column_name",
+    "entity_link",
+    "test_definition_name",
+    "test_definition_fqn",
+    "description",
+    "parameter_values",
+    "status",
+    "result_message",
+    "result_timestamp",
+    "failed_rows_sample",
+    "source",
+]
+
+_ENTITY_LINK_RE = re.compile(r"<#E::table::(?P<table>[^:>]+)(?:::columns::(?P<column>[^:>]+))?>")
+
+
+def _parse_entity_link(link: str) -> tuple[str | None, str | None]:
+    """Pull (table_fqn, column_name) out of an OpenMetadata entity link.
+
+    Format is `<#E::table::<fqn>::columns::<name>>` for column-level tests
+    and `<#E::table::<fqn>>` for table-level. Returns (None, None) if the
+    link doesn't parse — defensive because tests can target other entities.
+    """
+    if not link:
+        return None, None
+    m = _ENTITY_LINK_RE.search(link)
+    if not m:
+        return None, None
+    return m.group("table"), m.group("column")
+
+
+def _fetch_test_cases(http) -> list[dict]:
+    """Fetch every test case + its latest result from OpenMetadata.
+
+    Requesting `fields=testDefinition,testCaseResult` inlines the latest
+    run result so we don't need a second round-trip per test. Any error
+    returns `[]` — DQ is optional and we don't want a misconfigured OM
+    to break the whole refresh.
+    """
+    try:
+        raw = _fetch_paginated(
+            http,
+            "/v1/dataQuality/testCases",
+            fields="testDefinition,testCaseResult",
+        )
+    except Exception as e:
+        logger.warning(f"DQ test case fetch failed ({e}); falling back to fixture")
+        return []
+    rows: list[dict] = []
+    for t in raw:
+        entity_link = t.get("entityLink") or ""
+        table_fqn, column_name = _parse_entity_link(entity_link)
+        result = t.get("testCaseResult") or {}
+        test_def = t.get("testDefinition") or {}
+        rows.append(
+            {
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "fqn": t.get("fullyQualifiedName"),
+                "table_fqn": table_fqn,
+                "column_name": column_name,
+                "entity_link": entity_link,
+                "test_definition_name": test_def.get("name")
+                or (test_def.get("fullyQualifiedName") or "").split(".")[-1],
+                "test_definition_fqn": test_def.get("fullyQualifiedName"),
+                "description": t.get("description"),
+                "parameter_values": json.dumps(t.get("parameterValues") or []),
+                "status": result.get("testCaseStatus"),
+                "result_message": result.get("result"),
+                "result_timestamp": result.get("timestamp"),
+                "failed_rows_sample": json.dumps(result.get("sampleData") or []),
+                "source": "openmetadata",
+            }
+        )
+    return rows
+
+
+def _load_synthetic_test_cases() -> list[dict]:
+    """Read a committed demo fixture so the DQ feature has data when OM has none.
+
+    The fixture is a JSON list of rows matching `_TEST_CASE_COLUMNS`. Missing
+    fields default to None. If the file is absent or malformed we return an
+    empty list — DQ just won't have anything to explain.
+    """
+    fixture_path = Path(__file__).parent.parent.parent / "scripts" / "dq_fixtures.json"
+    if not fixture_path.exists():
+        return []
+    try:
+        raw = json.loads(fixture_path.read_text())
+    except Exception as e:
+        logger.warning(f"DQ fixture parse failed: {e}")
+        return []
+    rows: list[dict] = []
+    for item in raw:
+        rows.append({col: item.get(col) for col in _TEST_CASE_COLUMNS})
+    logger.info(f"Loaded {len(rows)} DQ test cases from synthetic fixture.")
     return rows
 
 

@@ -286,7 +286,9 @@ Accuracy and coverage get equal weight because wrong docs hurt as much as missin
 3. **Cleaning** (`app/engines/cleaning.py`) — The differentiator. Detects
    stale descriptions (LLM compares description against actual columns),
    finds tag conflicts across schemas, scores description quality 1-5,
-   surfaces naming inconsistencies via fuzzy matching.
+   surfaces naming inconsistencies via fuzzy matching, and turns raw DQ
+   test failures into plain-English explanations with root-cause guesses
+   and next-step recommendations.
 
 4. **Interface** (`app/engines/agent.py`) — That's me, Stew. LangChain agent
    wired to 11 tools over the other engines. Chat in natural language.""",
@@ -371,6 +373,19 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
 **Impact analysis**
 - Compute blast radius for a table (direct + transitive downstream, weighted by PII)
 - Rank the whole catalog by downstream impact
+
+**Data quality explanations**
+- List every failing DQ check and turn each into plain English: what it checks,
+  what the likely root cause is, and the single next step to take
+- Explain every failure on a specific table on demand
+
+**Data quality recommendations**
+- Propose DQ tests that should exist on a specific table but don't (skips duplicates)
+- Summarize catalog-wide DQ gaps by severity: critical / recommended / nice-to-have
+
+**Data quality × lineage risk**
+- Compute the downstream blast radius of failing DQ tests on one table
+- Rank the whole catalog by DQ risk (failures × downstream footprint, PII-amplified)
 
 **Stewardship accountability**
 - Per-team scorecard — who owns what, coverage per team, PII footprint
@@ -503,6 +518,400 @@ def ownership_report() -> str:
             short = ".".join(r["fqn"].split(".")[-2:])
             doc_marker = "📝" if r["documented"] else "❌"
             lines.append(f"- {doc_marker} `{short}`")
+
+    return "\n".join(lines)
+
+
+_SEVERITY_EMOJI = {"critical": "🚨", "recommended": "💡", "nice-to-have": "✨"}
+
+
+def _render_dq_recommendation(r, *, include_table: bool = False) -> list[str]:
+    """Shared formatter for both on-demand and cached DQ recommendations."""
+    emoji = _SEVERITY_EMOJI.get(str(r.get("severity") or "").lower(), "💡")
+    column = r.get("column_name") or "(table-level)"
+    heading = f"{emoji} **{r.get('test_definition')}** on `{column}`"
+    if include_table:
+        short = ".".join((r.get("table_fqn") or "").split(".")[-2:])
+        heading += f" _(table `{short}`)_"
+    lines = [heading]
+    # Parameters may be a JSON string (from the cache) or a list (from on-demand).
+    raw_params = r.get("parameters")
+    if isinstance(raw_params, str):
+        try:
+            import json as _json
+
+            raw_params = _json.loads(raw_params)
+        except Exception:
+            raw_params = []
+    if raw_params:
+        param_text = ", ".join(f"{p.get('name')}=`{p.get('value')}`" for p in raw_params)
+        lines.append(f"- **Parameters:** {param_text}")
+    if r.get("rationale"):
+        lines.append(f"- **Why:** {r['rationale']}")
+    return lines
+
+
+@tool
+def recommend_dq_tests(fqn: str) -> str:
+    """Propose data quality checks that SHOULD exist on a table but currently don't.
+
+    ★ Use this for any "what DQ tests should I add?", "recommend data quality
+      checks for X", "what's missing from the DQ coverage on this table?",
+      or "suggest tests for <table>" question. ★
+
+    Reads the table's columns, types, tags, and already-configured tests, then
+    emits a ranked list of recommended tests with parameters and a plain-English
+    rationale. Skips anything already configured. Pass the FULL 4-part FQN
+    (service.database.schema.table) — silently call `list_tables` first if the
+    user gave a short name.
+
+    Output is markdown: each recommendation shows the test definition, the
+    target column (or `(table-level)`), parameters, severity, and rationale.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    if not fqn or not fqn.strip():
+        return "Tell me which table to scan. Use `list_tables` if you need the FQN."
+
+    # Validate the FQN up front so we don't waste an LLM call on a wrong name.
+    check = duck.query(
+        "SELECT 1 FROM om_tables WHERE fullyQualifiedName = ?",
+        [fqn.strip()],
+    )
+    if check.empty:
+        return (
+            f"Table `{fqn}` doesn't exist in the catalog. "
+            f"Use `list_tables` to find the real 4-part FQN."
+        )
+
+    recs = stewardship.recommend_dq_tests(fqn.strip())
+    if not recs:
+        return (
+            f"No new DQ tests recommended for `{fqn}` — either the existing "
+            f"coverage is already solid or the columns don't warrant additional "
+            f"checks right now."
+        )
+
+    # Sort: critical first, then recommended, then nice-to-have
+    order = {"critical": 0, "recommended": 1, "nice-to-have": 2}
+    recs.sort(key=lambda r: order.get(r.severity.lower(), 3))
+
+    lines: list[str] = [f"**{len(recs)} recommended DQ test(s) for `{fqn}`**", ""]
+    for r in recs:
+        lines.extend(
+            _render_dq_recommendation(
+                {
+                    "table_fqn": r.table_fqn,
+                    "column_name": r.column_name,
+                    "test_definition": r.test_definition,
+                    "parameters": r.parameters,
+                    "rationale": r.rationale,
+                    "severity": r.severity,
+                }
+            )
+        )
+        lines.append("")
+    return "\n".join(lines)
+
+
+@tool
+def find_dq_gaps(severity: str = "") -> str:
+    """Catalog-wide summary of recommended DQ tests from the cached scan.
+
+    Use when the user asks _"what DQ tests are missing across the catalog?"_,
+    _"show me the DQ gaps"_, _"which tables need more tests?"_, or similar
+    catalog-wide questions. This reads from the `dq_recommendations` cache,
+    populated by the "💡 Recommend DQ tests" sidebar button.
+
+    Optional `severity` filter: "critical", "recommended", or "nice-to-have"
+    (empty string = all). If the cache is empty, tell the user to click the
+    sidebar button to populate it.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    try:
+        duck.query("SELECT 1 FROM dq_recommendations LIMIT 1")
+    except Exception:
+        return (
+            "No DQ recommendations cached yet. Click **💡 Recommend DQ tests** in "
+            "the sidebar to scan the catalog — that populates the gap summary."
+        )
+
+    severity = (severity or "").strip().lower()
+    valid = {"critical", "recommended", "nice-to-have"}
+    sql = "SELECT table_fqn, column_name, test_definition, parameters, rationale, severity FROM dq_recommendations"
+    params: list = []
+    if severity:
+        if severity not in valid:
+            return f"Unknown severity `{severity}`. Valid options: {', '.join(sorted(valid))}."
+        sql += " WHERE severity = ?"
+        params.append(severity)
+    sql += " ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'recommended' THEN 1 ELSE 2 END, table_fqn, column_name"
+
+    df = duck.query(sql, params)
+    if df.empty:
+        return (
+            f"No DQ gaps found{' for severity ' + severity if severity else ''}. "
+            "Either the cache is empty or every table has sufficient coverage."
+        )
+
+    # Group by table so the output reads top-down rather than as a flat list.
+    totals = {"critical": 0, "recommended": 0, "nice-to-have": 0}
+    grouped: dict[str, list[dict]] = {}
+    for _, row in df.iterrows():
+        totals[row["severity"]] = totals.get(row["severity"], 0) + 1
+        grouped.setdefault(row["table_fqn"], []).append(row.to_dict())
+
+    header = (
+        f"**DQ gaps — {len(df)} recommendation(s) across {len(grouped)} table(s)**\n"
+        f"🚨 {totals.get('critical', 0)} critical · "
+        f"💡 {totals.get('recommended', 0)} recommended · "
+        f"✨ {totals.get('nice-to-have', 0)} nice-to-have"
+    )
+    lines: list[str] = [header, ""]
+    for table_fqn, rows in grouped.items():
+        short = ".".join(table_fqn.split(".")[-2:])
+        lines.append(f"### `{short}` — {len(rows)} gap(s)")
+        for r in rows:
+            lines.extend(_render_dq_recommendation(r))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+@tool
+def dq_impact(fqn: str) -> str:
+    """Downstream BLAST RADIUS of currently-failing DQ tests on a single table.
+
+    ★ Use this for _"what's the downstream impact of these DQ failures?"_,
+      _"who's affected by the broken tests on <table>?"_, _"risk of the failing
+      checks on <table>"_, _"DQ blast radius"_, _"if these tests keep failing,
+      who's hurt?"_ ★
+
+    Reports: how many tests are failing on the table, direct + transitive
+    downstream table counts, how many downstream tables carry PII.Sensitive,
+    and a weighted risk score (failed_tests × (direct + 0.5·transitive +
+    2·pii_downstream)). Risk is zero if either the table has no failing
+    tests OR no downstream lineage.
+
+    Pass the FULL 4-part FQN (service.database.schema.table). If you don't
+    know it, silently call `list_tables` first.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    if not fqn or not fqn.strip():
+        return "Tell me which table to assess. Use `list_tables` if you need the FQN."
+
+    check = duck.query(
+        "SELECT 1 FROM om_tables WHERE fullyQualifiedName = ?",
+        [fqn.strip()],
+    )
+    if check.empty:
+        return (
+            f"Table `{fqn}` doesn't exist in the catalog. "
+            f"Use `list_tables` to find the real 4-part FQN."
+        )
+
+    r = analysis.dq_impact(fqn.strip())
+    if r["failed_tests"] == 0:
+        return (
+            f"**`{fqn}`** has no failing DQ tests right now — nothing broken "
+            "means no downstream blast radius from DQ.\n\n"
+            "_If the catalog has no DQ tests configured at all, click_ "
+            "**🧪 Explain DQ failures** _in the sidebar — it'll load the demo "
+            "fixture so you have something to reason about._"
+        )
+    if r["transitive"] == 0:
+        return (
+            f"**`{fqn}`** has **{r['failed_tests']}** failing DQ test(s), but "
+            "it's a leaf table — nothing downstream. The breakage is contained "
+            "to this table's own readers.\n\n"
+            f"_Failing tests:_ {', '.join(f'`{t}`' for t in r['failing_test_names'])}"
+        )
+
+    lines = [
+        f"**DQ blast radius for `{fqn}`**",
+        "",
+        f"- **Failing tests:** {r['failed_tests']} "
+        + ("(" + ", ".join(f"`{t}`" for t in r["failing_test_names"]) + ")")
+        if r["failing_test_names"]
+        else f"- **Failing tests:** {r['failed_tests']}",
+        f"- **Direct dependents:** {r['direct']}",
+        f"- **Transitive downstream:** {r['transitive']} table(s)",
+        f"- **Downstream with PII.Sensitive:** {r['pii_downstream']}",
+        f"- **Weighted risk score:** **{r['risk_score']}** "
+        f"_(failed_tests × (direct + 0.5·transitive + 2·pii_downstream))_",
+        "",
+        "Downstream tables at risk:",
+    ]
+    for t in r["downstream_fqns"][:10]:
+        short = ".".join(t.split(".")[-2:])
+        lines.append(f"- `{short}`")
+    if len(r["downstream_fqns"]) > 10:
+        lines.append(f"- _…and {len(r['downstream_fqns']) - 10} more_")
+    return "\n".join(lines)
+
+
+@tool
+def dq_risk_catalog(limit: int = 10) -> str:
+    """Catalog-wide ranking of tables by DQ risk (failures × downstream weight).
+
+    ★ Use this for _"where should I fix DQ first?"_, _"which broken tests hurt
+      the most?"_, _"rank DQ risk"_, _"top DQ risks"_, _"where are failing
+      checks having the biggest blast radius?"_ ★
+
+    Returns a ranked list of tables that have at least one failing DQ test,
+    sorted by the composite risk score (failed_tests × weighted downstream
+    footprint, PII-amplified). Use this before recommending where a steward
+    should spend triage time.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = analysis.dq_risk_ranking(limit=int(limit) if limit else 10)
+    if df.empty:
+        return (
+            "No failing DQ tests with downstream impact right now — either "
+            "there are no failures, or the failing tables are leaves."
+        )
+
+    lines: list[str] = [
+        f"**Top {len(df)} DQ risks** — failing tests × downstream blast radius",
+        "",
+        "| Rank | Table | Failed tests | Downstream | PII downstream | Risk score |",
+        "|---|---|---|---|---|---|",
+    ]
+    for i, (_, r) in enumerate(df.iterrows(), start=1):
+        short = ".".join(r["fqn"].split(".")[-2:])
+        lines.append(
+            f"| {i} | `{short}` | {int(r['failed_tests'])} | "
+            f"{int(r['transitive'])} | {int(r['pii_downstream'])} | "
+            f"**{r['risk_score']}** |"
+        )
+    return "\n".join(lines)
+
+
+@tool
+def dq_failures_summary(schema_name: str = "") -> str:
+    """List every FAILING data quality check with LLM plain-English explanations.
+
+    ★ Use this for any "why is my DQ check failing?", "what data quality
+      issues do I have?", "explain the failed tests", "which tables have
+      quality problems?", or "summarize failures" question. ★
+
+    Pass an empty string for `schema_name` to scan the entire catalog, or a
+    schema name (e.g. `sales`, `users`) to filter. Returns a markdown list of
+    failures with the test definition, the raw failure message, and — when
+    the user has already clicked "🧪 Explain DQ failures" in the sidebar —
+    the LLM's summary / likely cause / next-step guidance per test.
+
+    If no explanations exist yet, the tool still lists the raw failures and
+    reminds the user to run the explain scan for the enriched output.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+
+    failures = analysis.dq_failures()
+    if failures.empty:
+        return (
+            "No failing data quality checks found. "
+            "Either the catalog has no DQ tests configured, or every test is "
+            "currently passing."
+        )
+
+    if schema_name:
+        s = schema_name.strip().lower()
+        failures = failures[
+            failures["table_fqn"].str.lower().str.contains(f".{s}.", regex=False, na=False)
+        ]
+        if failures.empty:
+            return f"No failing DQ checks in schema `{schema_name}`."
+
+    # Left-join to dq_explanations so we carry summary/cause/next_step inline
+    # when available. Fall back to raw failures if the explanation cache
+    # hasn't been populated yet.
+    have_explanations = False
+    try:
+        duck.query("SELECT 1 FROM dq_explanations LIMIT 1")
+        have_explanations = True
+    except Exception:
+        pass
+
+    explanations: dict[str, dict] = {}
+    if have_explanations:
+        exp_df = duck.query("SELECT test_id, summary, likely_cause, next_step FROM dq_explanations")
+        for _, r in exp_df.iterrows():
+            explanations[str(r["test_id"])] = {
+                "summary": _as_str(r["summary"]),
+                "likely_cause": _as_str(r["likely_cause"]),
+                "next_step": _as_str(r["next_step"]),
+            }
+
+    lines: list[str] = [f"**{len(failures)} failing DQ check(s)**", ""]
+    for _, row in failures.iterrows():
+        short = ".".join((row["table_fqn"] or "").split(".")[-2:])
+        col_part = f".{row['column_name']}" if row.get("column_name") else ""
+        lines.append(f"### 🔴 `{short}{col_part}` — {row['test_name']}")
+        lines.append(
+            f"_Definition:_ `{row['test_definition_name']}` · _Message:_ {row['result_message']}"
+        )
+        exp = explanations.get(str(row["test_id"]))
+        if exp:
+            lines.append(f"- **Summary:** {exp['summary']}")
+            lines.append(f"- **Likely cause:** {exp['likely_cause']}")
+            lines.append(f"- **Next step:** {exp['next_step']}")
+        lines.append("")
+
+    if not have_explanations or not explanations:
+        lines.append(
+            "_Tip: click **🧪 Explain DQ failures** in the sidebar to get "
+            "plain-English summaries and next-step recommendations for each failure._"
+        )
+
+    return "\n".join(lines)
+
+
+@tool
+def dq_explain(fqn: str) -> str:
+    """Explain EVERY failing DQ check on a single table in plain English.
+
+    Use when the user asks _"explain the DQ failures on <table>"_, _"why is the
+    test on <column> failing?"_, or _"what's wrong with <table>'s data quality"_.
+
+    Pass the FULL 4-part FQN (service.database.schema.table). Generates a
+    fresh LLM explanation per failure on this table — separate from the
+    catalog-wide cached explanations used by `dq_failures_summary`. Returns
+    markdown with one section per failure.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    if not fqn or not fqn.strip():
+        return "Tell me which table to explain. Use `list_tables` if you need the FQN."
+
+    failures = analysis.dq_failures()
+    if failures.empty:
+        return "No failing DQ checks in the catalog right now."
+    scoped = failures[failures["table_fqn"] == fqn.strip()]
+    if scoped.empty:
+        return f"No failing DQ checks on `{fqn}` — either it has no tests or they're all passing."
+
+    lines: list[str] = [f"**DQ failures on `{fqn}` ({len(scoped)} test(s))**", ""]
+    for _, row in scoped.iterrows():
+        try:
+            exp = cleaning.explain_dq_failure(row.to_dict())
+        except Exception as e:
+            logger.warning(f"Ad-hoc DQ explanation failed for {row['test_name']}: {e}")
+            lines.append(f"### 🔴 {row['test_name']}")
+            lines.append(f"Couldn't generate an explanation — raw failure: {row['result_message']}")
+            lines.append("")
+            continue
+        col_part = f".{row['column_name']}" if row.get("column_name") else ""
+        lines.append(
+            f"### 🔴 `{(row['table_fqn'] or '').split('.')[-1]}{col_part}` — {exp.test_name}"
+        )
+        lines.append(f"- **Summary:** {exp.summary}")
+        lines.append(f"- **Likely cause:** {exp.likely_cause}")
+        lines.append(f"- **Next step:** {exp.next_step}")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -810,6 +1219,12 @@ ALL_TOOLS = [
     about_metasift,
     ownership_report,
     impact_check,
+    dq_impact,
+    dq_risk_catalog,
+    dq_failures_summary,
+    dq_explain,
+    recommend_dq_tests,
+    find_dq_gaps,
     generate_description_for,
     auto_document_schema,
     apply_description,
