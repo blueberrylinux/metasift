@@ -502,40 +502,68 @@ def blast_radius_bars() -> go.Figure | None:
 # ── 6. Description quality histogram ────────────────────────────────────────
 
 
-def quality_histogram() -> go.Figure | None:
-    """Distribution of description quality scores (1-5) across tables."""
+def quality_by_table() -> go.Figure | None:
+    """Per-table description quality breakdown with LLM rationale on hover.
+
+    Shows one bar per analyzed table (sorted worst → best) so users can see
+    exactly which descriptions are dragging the mean score down, not just
+    the overall distribution.
+    """
     try:
         df = duck.query("""
-            SELECT fqn, quality_score
+            SELECT fqn, quality_score, quality_rationale
             FROM cleaning_results
             WHERE quality_score IS NOT NULL AND quality_score > 0
+            ORDER BY quality_score ASC, fqn
         """)
     except Exception:
         return None
     if df.empty:
         return None
 
-    # Bucket counts per integer score so we can color bars by severity
-    counts = df["quality_score"].value_counts().sort_index()
     bucket_colors = {1: "#ef4444", 2: "#f97316", 3: "#eab308", 4: "#84cc16", 5: "#22c55e"}
+    colors = [bucket_colors.get(int(s), _DEFAULT_COLOR) for s in df["quality_score"]]
+    short_labels = [_short_of(f) for f in df["fqn"]]
+
+    def _fmt_rationale(r: str) -> str:
+        r = (r or "").strip() or "<i>(no rationale recorded)</i>"
+        return r if len(r) <= 220 else r[:217] + "…"
+
+    hover = [
+        f"<b>{sl}</b><br>Score: {int(s)}/5<br><br>{_fmt_rationale(r)}"
+        for sl, s, r in zip(
+            short_labels, df["quality_score"], df["quality_rationale"], strict=True
+        )
+    ]
 
     fig = go.Figure(
         go.Bar(
-            x=[f"{s}/5" for s in counts.index],
-            y=counts.values,
-            marker={"color": [bucket_colors.get(int(s), _DEFAULT_COLOR) for s in counts.index]},
-            text=counts.values,
+            y=short_labels,
+            x=df["quality_score"],
+            orientation="h",
+            marker={"color": colors},
+            text=[f"{int(s)}/5" for s in df["quality_score"]],
             textposition="outside",
-            hovertemplate="<b>Score %{x}</b><br>%{y} table(s)<extra></extra>",
+            hovertext=hover,
+            hoverinfo="text",
         )
     )
+    total = int(df["quality_score"].sum())
+    max_points = len(df) * 5
     mean_score = float(df["quality_score"].mean())
     fig.update_layout(
-        height=360,
-        margin={"t": 60, "b": 40, "l": 40, "r": 20},
-        title=(f"Description quality — {len(df)} table(s) analyzed · mean {mean_score:.2f}/5"),
-        xaxis={"title": "Quality score (1 = useless, 5 = excellent)"},
-        yaxis={"title": "# tables"},
+        height=max(320, 40 * len(df) + 100),
+        margin={"t": 70, "b": 40, "l": 180, "r": 80},
+        title=(
+            f"Description quality — {total}/{max_points} points · "
+            f"mean {mean_score:.2f}/5 · hover for LLM rationale"
+        ),
+        xaxis={
+            "title": "Quality score (1 = useless, 5 = excellent)",
+            "range": [0, 5.5],
+            "dtick": 1,
+        },
+        yaxis={"autorange": "reversed"},
         showlegend=False,
     )
     return fig
@@ -550,7 +578,7 @@ ALL_VIZ: list[tuple[str, str, callable]] = [
     ("👥 Stewardship", "per-team scorecard + orphan count", stewardship_leaderboard),
     ("🗺️ Catalog map", "treemap by schema / table / PII share", catalog_treemap),
     ("🔥 Tag conflicts", "column × table → tag heatmap", tag_conflict_heatmap),
-    ("📈 Quality", "description quality distribution", quality_histogram),
+    ("📈 Quality", "per-table description scores with LLM rationale on hover", quality_by_table),
 ]
 
 

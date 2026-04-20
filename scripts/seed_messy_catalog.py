@@ -167,22 +167,22 @@ def ensure_schema(c: httpx.Client, schema: str) -> None:
     logger.info(f"schema {schema}: {r.status_code}")
 
 
+def _column_tags(tag: str | None) -> list[dict]:
+    if not tag:
+        return []
+    return [
+        {
+            "tagFQN": tag,
+            "labelType": "Manual",
+            "state": "Confirmed",
+            "source": "Classification",
+        }
+    ]
+
+
 def create_table(c: httpx.Client, schema: str, spec: dict) -> None:
     cols = [
-        {
-            "name": name,
-            "dataType": dtype,
-            "tags": [
-                {
-                    "tagFQN": tag,
-                    "labelType": "Manual",
-                    "state": "Confirmed",
-                    "source": "Classification",
-                }
-            ]
-            if tag
-            else [],
-        }
+        {"name": name, "dataType": dtype, "tags": _column_tags(tag)}
         for name, dtype, tag in spec["columns"]
     ]
     payload = {
@@ -194,6 +194,64 @@ def create_table(c: httpx.Client, schema: str, spec: dict) -> None:
     r = c.put("/v1/tables", json=payload)
     status = "✔" if r.status_code in (200, 201) else f"✘ {r.status_code}"
     logger.info(f"  {status} {schema}.{spec['name']}")
+
+
+def force_reset_table(c: httpx.Client, schema: str, spec: dict) -> None:
+    """Force description + column tags back to seed values via JSON-patch.
+
+    PUT /v1/tables has merge semantics in OpenMetadata — empty-string
+    descriptions and missing tag arrays don't clear previously-applied
+    values. This re-fetches the table after PUT and emits explicit
+    replace/remove ops so `make seed` is truly idempotent regardless of
+    whatever accepts/edits happened in prior sessions.
+    """
+    fqn = _table_fqn(schema, spec["name"])
+    # `fields=columns,tags` is load-bearing — without it OM strips column tags
+    # from the response and the diff below sees every column as untagged,
+    # turning real cleanup ops into no-ops.
+    r = c.get(f"/v1/tables/name/{fqn}", params={"fields": "columns,tags"})
+    if r.status_code != 200:
+        logger.warning(f"    reset ✘ can't fetch {fqn}: {r.status_code}")
+        return
+    current = r.json()
+
+    patches: list[dict] = []
+
+    # Description: remove when target is empty, replace otherwise. OM rejects
+    # empty-string values on some string fields (Pydantic min_length=1), so
+    # `remove` is the safe way to express "clear this".
+    current_desc = current.get("description") or ""
+    target_desc = spec["description"] or ""
+    if current_desc != target_desc:
+        if target_desc:
+            patches.append({"op": "replace", "path": "/description", "value": target_desc})
+        elif current_desc:
+            patches.append({"op": "remove", "path": "/description"})
+
+    # Column tags — replace each column's tags array by index. Rely on OM
+    # preserving column order across PUT, which it does for named columns.
+    target_tags_by_name = {
+        name: _column_tags(tag) for name, _dtype, tag in spec["columns"]
+    }
+    for idx, col in enumerate(current.get("columns") or []):
+        name = col.get("name")
+        target = target_tags_by_name.get(name, [])
+        current_fqns = sorted(t.get("tagFQN", "") for t in (col.get("tags") or []))
+        target_fqns = sorted(t.get("tagFQN", "") for t in target)
+        if current_fqns != target_fqns:
+            patches.append(
+                {"op": "replace", "path": f"/columns/{idx}/tags", "value": target}
+            )
+
+    if not patches:
+        return
+    r = c.patch(
+        f"/v1/tables/name/{fqn}",
+        headers={"Content-Type": "application/json-patch+json"},
+        json=patches,
+    )
+    status = "✔" if r.status_code == 200 else f"✘ {r.status_code}"
+    logger.info(f"    reset {status} {schema}.{spec['name']} ({len(patches)} op(s))")
 
 
 # Lineage edges (source_schema.source_table → target_schema.target_table).
@@ -342,6 +400,7 @@ def main() -> int:
             ensure_schema(c, schema)
             for spec in tables:
                 create_table(c, schema, spec)
+                force_reset_table(c, schema, spec)
         create_lineage_edges(c)
         ensure_teams_and_ownership(c)
     logger.success("Seeding complete.")

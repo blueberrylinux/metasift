@@ -28,26 +28,90 @@ class StaleReport:
     confidence: float
 
 
+def _build_stale_prompt(fqn: str, description: str, col_summary: str) -> str:
+    """Adversarial prompt with few-shot anchors — soft prompts rubber-stamp any
+    grammatically-clean description; we need the model to hunt for mismatches.
+    """
+    return (
+        "You are auditing a data catalog for descriptions that don't match their "
+        "actual columns.\n\n"
+        "A description is STALE when it does NOT accurately describe what the table "
+        "contains. Be skeptical — the description may have been copy-pasted from "
+        "another table, written before the schema drifted, or left as a placeholder.\n\n"
+        "Look for:\n"
+        "- Entity mismatch (description mentions one concept, columns describe another)\n"
+        "- Grain mismatch (claims 'daily/aggregated' but columns are row-level)\n"
+        "- Placeholder text (single chars, 'TODO', 'data table', generic noun phrases)\n\n"
+        "Example 1 — STALE (entity mismatch):\n"
+        "  Table: sales.refund_events\n"
+        '  Description: "Daily sales aggregates by region and product."\n'
+        "  Columns: refund_id (BIGINT), order_id (BIGINT), reason_code (STRING), "
+        "refunded_at (TIMESTAMP)\n"
+        '  Verdict: {"stale": true, "reason": "description claims sales aggregates '
+        'by region/product but columns describe individual refund events — no region, '
+        'product, or aggregation", "corrected": "Refund events — one row per refund, '
+        'linked to the originating order and reason code.", "confidence": 0.95}\n\n'
+        "Example 2 — STALE (placeholder):\n"
+        "  Table: finance.payments\n"
+        '  Description: "t"\n'
+        "  Columns: payment_id (BIGINT), invoice_id (BIGINT), amount (DECIMAL)\n"
+        '  Verdict: {"stale": true, "reason": "single-letter placeholder, not a real '
+        'description", "corrected": "Payments — one row per payment event, linked to '
+        'the invoice it settles.", "confidence": 0.99}\n\n'
+        "Example 3 — NOT stale:\n"
+        "  Table: sales.orders\n"
+        '  Description: "Customer order transactions with payment and fulfillment status."\n'
+        "  Columns: order_id (BIGINT), customer_id (BIGINT), total_amount (DECIMAL), "
+        "created_at (TIMESTAMP)\n"
+        '  Verdict: {"stale": false, "reason": "description accurately reflects the '
+        'columns", "corrected": "", "confidence": 0.9}\n\n'
+        "Now audit this table:\n"
+        f"  Table: {fqn}\n"
+        f"  Description: {description}\n"
+        f"  Columns: {col_summary}\n\n"
+        "Respond with ONLY a JSON object (no prose, no code fences):\n"
+        '{"stale": bool, "reason": str, "corrected": str, "confidence": float}'
+    )
+
+
+def _parse_stale_json(text: str) -> dict | None:
+    cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+
+
 def detect_stale(fqn: str, current_description: str, columns: list[dict]) -> StaleReport:
-    """Compare a description against actual column metadata."""
+    """Compare a description against actual column metadata.
+
+    Retries once on JSON parse failure — free-tier models sometimes emit
+    truncated or missing-value objects (e.g. `"stale":,`) that still contain
+    the intended verdict, so a strict-mode retry rescues the finding.
+    """
     llm = get_llm("stale")
     col_summary = ", ".join(f"{c['name']} ({c['dataType']})" for c in columns[:20])
-    prompt = (
-        "Compare this table description against its actual columns. Is the description "
-        "accurate, or is it stale/wrong?\n\n"
-        f"Table: {fqn}\nCurrent description: {current_description}\nColumns: {col_summary}\n\n"
-        "Respond ONLY with JSON:\n"
-        '{"stale": bool, "reason": str, "corrected": str, "confidence": float 0-1}'
-    )
+    prompt = _build_stale_prompt(fqn, current_description, col_summary)
+
     result = llm.invoke(prompt)
     text = result.content if hasattr(result, "content") else str(result)
-    try:
-        # Strip markdown code fences if present
-        text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
+    parsed = _parse_stale_json(text)
+
+    if parsed is None:
+        logger.warning(f"Stale JSON malformed for {fqn}, retrying with strict mode")
+        retry_prompt = (
+            prompt
+            + "\n\nYour previous response was not valid JSON. Return ONLY the JSON "
+            "object — no prose, no code fences. Every field must have a value."
+        )
+        retry = llm.invoke(retry_prompt)
+        text = retry.content if hasattr(retry, "content") else str(retry)
+        parsed = _parse_stale_json(text)
+
+    if parsed is None:
         logger.warning(f"Could not parse stale response for {fqn}: {text[:200]}")
         parsed = {"stale": False, "reason": "parse_error", "corrected": "", "confidence": 0.0}
+
     return StaleReport(
         fqn=fqn,
         old=current_description,
