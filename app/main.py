@@ -479,7 +479,7 @@ def _render_review_panel() -> None:
             "Reject dismisses until the next scan."
         )
     with top_r:
-        if st.button("← Back to chat", use_container_width=True, key="review_back"):
+        if st.button("← Back to chat", width="stretch", key="review_back"):
             st.session_state.show_review = False
             st.rerun()
 
@@ -530,7 +530,7 @@ def _render_viz_panel() -> None:
             "Refresh / Deep scan / PII scan — some tabs need specific scans run first."
         )
     with top_r:
-        if st.button("← Back to chat", use_container_width=True, key="viz_back"):
+        if st.button("← Back to chat", width="stretch", key="viz_back"):
             st.session_state.show_viz = False
             st.rerun()
 
@@ -555,7 +555,7 @@ def _render_viz_panel() -> None:
                 continue
             st.plotly_chart(
                 fig,
-                use_container_width=True,
+                width="stretch",
                 key=f"viz::{label}",
                 config={"displaylogo": False},
             )
@@ -616,7 +616,7 @@ with st.sidebar:
 
     st.divider()
 
-    if st.button("🔄 Refresh metadata", use_container_width=True):
+    if st.button("🔄 Refresh metadata", width="stretch"):
         if not om_ok:
             st.error("Start OpenMetadata first: `make stack-up`")
         else:
@@ -629,7 +629,7 @@ with st.sidebar:
 
     if st.button(
         "🔬 Deep scan",
-        use_container_width=True,
+        width="stretch",
         help="Run stale-description + quality-scoring analysis (LLM calls — takes ~30s)",
     ):
         if not om_ok:
@@ -658,7 +658,7 @@ with st.sidebar:
 
     if st.button(
         "🔐 PII scan",
-        use_container_width=True,
+        width="stretch",
         help="Heuristic classification of all columns (fast — no LLM calls)",
     ):
         if not om_ok:
@@ -678,7 +678,7 @@ with st.sidebar:
 
     if st.button(
         "💡 Recommend DQ tests",
-        use_container_width=True,
+        width="stretch",
         help="Suggest data quality tests every table should have but currently doesn't (LLM calls — one per table)",
     ):
         if not om_ok:
@@ -710,7 +710,7 @@ with st.sidebar:
 
     if st.button(
         "🧪 Explain DQ failures",
-        use_container_width=True,
+        width="stretch",
         help="Generate plain-English explanations for every failed data quality check (LLM calls — one per failure)",
     ):
         if not om_ok:
@@ -745,7 +745,7 @@ with st.sidebar:
     in_review = bool(st.session_state.get("show_review"))
     if st.button(
         "← Back to chat" if in_review else review_label,
-        use_container_width=True,
+        width="stretch",
         type="primary" if pending and not in_review else "secondary",
         help="Approve or reject suggestions from the cleaning and PII engines",
     ):
@@ -758,7 +758,7 @@ with st.sidebar:
     in_viz = bool(st.session_state.get("show_viz"))
     if viz.has_any_data() and st.button(
         "← Back to chat" if in_viz else "📊 Visualizations",
-        use_container_width=True,
+        width="stretch",
         help="Interactive plotly charts — lineage, PII distribution, quality, and more",
     ):
         st.session_state.show_viz = not in_viz
@@ -783,7 +783,7 @@ with st.sidebar:
                 data=report_md,
                 file_name=fname,
                 mime="text/markdown",
-                use_container_width=True,
+                width="stretch",
                 help="Download a markdown summary of catalog health, stale docs, PII gaps, and more",
             )
         except Exception as e:
@@ -834,7 +834,7 @@ if show_welcome:
     sc3, sc4 = st.columns(2)
     columns = [sc1, sc2, sc3, sc4]
     for (label, prompt_text), col in zip(SUGGESTIONS, columns, strict=True):
-        if col.button(label, use_container_width=True, key=f"suggest_{label}"):
+        if col.button(label, width="stretch", key=f"suggest_{label}"):
             st.session_state.pending_prompt = prompt_text
             st.rerun()
 else:
@@ -851,7 +851,7 @@ else:
 _nc_cols = st._bottom.columns([3, 2, 3])
 _nc_cols[1].button(
     "➕ New chat",
-    use_container_width=True,
+    width="stretch",
     key="new_chat_btn",
     help="Start a fresh chat",
     on_click=_reset_chat,

@@ -581,7 +581,7 @@ def dq_failure_table() -> go.Figure | None:
     try:
         df = duck.query("""
             SELECT
-                COALESCE(f.test_name, '') AS test_name,
+                COALESCE(f.name, '') AS test_name,
                 COALESCE(f.table_fqn, '') AS table_fqn,
                 COALESCE(f.column_name, '') AS column_name,
                 COALESCE(f.test_definition_name, '') AS test_definition,
@@ -599,7 +599,7 @@ def dq_failure_table() -> go.Figure | None:
         try:
             df = duck.query("""
                 SELECT
-                    COALESCE(test_name, '') AS test_name,
+                    COALESCE(name, '') AS test_name,
                     COALESCE(table_fqn, '') AS table_fqn,
                     COALESCE(column_name, '') AS column_name,
                     COALESCE(test_definition_name, '') AS test_definition,
