@@ -232,6 +232,13 @@ SUGGESTIONS: list[tuple[str, str]] = [
 
 @st.dialog("Welcome to MetaSift", width="large")
 def _welcome_dialog() -> None:
+    # Mark seen the moment the dialog is invoked — dismissal via outside-click
+    # or escape is equivalent to clicking "Got it" from the user's perspective,
+    # and leaving this on the button alone caused the guide to re-pop on every
+    # subsequent rerun (e.g. swapping the chat model).
+    st.session_state.welcome_seen = True
+    st.session_state.show_guide = False
+
     st.markdown(
         """
 **MetaSift** is an AI-powered metadata analyst and steward for OpenMetadata.
@@ -291,7 +298,7 @@ _This guide is always reachable via the **📖 Guide** button in the sidebar._
 
 
 _PROVIDER_PRESETS: dict[str, dict[str, str]] = {
-    "OpenRouter (default)": {
+    "OpenRouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "model_hint": "meta-llama/llama-3.3-70b-instruct:free",
     },
@@ -323,7 +330,7 @@ _PROVIDER_PRESETS: dict[str, dict[str, str]] = {
 # type a custom id via the "Other…" option. Keep each list ≤ 10 entries so
 # the dropdown doesn't turn into a scroll-scape.
 _MODEL_CATALOG: dict[str, list[str]] = {
-    "OpenRouter (default)": [
+    "OpenRouter": [
         "meta-llama/llama-3.3-70b-instruct:free",
         "mistralai/mistral-nemo:free",
         "google/gemini-2.0-flash-exp:free",
@@ -476,7 +483,7 @@ def _preset_for_url(base_url: str | None) -> str:
     """Match a base URL to a preset name for the sidebar status indicator.
     Falls back to 'Custom' for unknown endpoints."""
     if not base_url:
-        return "OpenRouter (default)"
+        return "OpenRouter"
     normalized = base_url.rstrip("/").lower()
     for name, preset in _PROVIDER_PRESETS.items():
         preset_url = preset["base_url"].rstrip("/").lower()
@@ -496,7 +503,7 @@ def _api_key_dialog() -> None:
     )
 
     current = llm.get_override()
-    default_preset = _preset_for_url(current.base_url) if current else "OpenRouter (default)"
+    default_preset = _preset_for_url(current.base_url) if current else "OpenRouter"
     preset_names = list(_PROVIDER_PRESETS.keys())
     preset_idx = preset_names.index(default_preset) if default_preset in preset_names else 0
 
@@ -1267,16 +1274,20 @@ with st.sidebar:
 
 
 # ── Main area ──────────────────────────────────────────────────────────────
-# Welcome / Guide dialog fires on first session load and on-demand whenever
-# the Guide sidebar button sets show_guide=True. Placed before the review /
-# viz short-circuits so the dialog is reachable from any screen.
-if not st.session_state.get("welcome_seen", False) or st.session_state.get("show_guide", False):
-    _welcome_dialog()
-
-# API-key override dialog — fires only on demand via the 🔑 API key sidebar
-# button (show_api_key=True). Independent of the welcome flow.
+# Dialog routing — Streamlit allows only ONE dialog per script run, so the
+# two dialogs here must be mutually exclusive. Priority order:
+#   1. Explicit "open LLM setup" click                      (highest)
+#   2. Explicit "open Guide" click
+#   3. First-load welcome (welcome_seen=False by default)   (lowest)
+# Without this precedence, welcome + LLM-setup could both fire in the same
+# render when a user opens settings before dismissing the welcome, and
+# Streamlit raises "only one dialog is allowed to be opened".
 if st.session_state.get("show_api_key", False):
     _api_key_dialog()
+elif st.session_state.get("show_guide", False) or not st.session_state.get(
+    "welcome_seen", False
+):
+    _welcome_dialog()
 
 # When the review-queue toggle is on, the main area shows the approvals panel
 # instead of the welcome / chat view. Chat state is preserved — toggling back
