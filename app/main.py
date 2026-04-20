@@ -300,7 +300,7 @@ _This guide is always reachable via the **📖 Guide** button in the sidebar._
 _PROVIDER_PRESETS: dict[str, dict[str, str]] = {
     "OpenRouter": {
         "base_url": "https://openrouter.ai/api/v1",
-        "model_hint": "meta-llama/llama-3.3-70b-instruct:free",
+        "model_hint": "meta-llama/llama-3.3-70b-instruct",
     },
     "OpenAI": {
         "base_url": "https://api.openai.com/v1",
@@ -330,15 +330,18 @@ _PROVIDER_PRESETS: dict[str, dict[str, str]] = {
 # type a custom id via the "Other…" option. Keep each list ≤ 10 entries so
 # the dropdown doesn't turn into a scroll-scape.
 _MODEL_CATALOG: dict[str, list[str]] = {
+    # Fallback list when the dynamic OpenRouter fetch fails. Paid Llama 3.3 is
+    # first because the free tier frequently rate-limits upstream providers
+    # (e.g. Venice) returning 429s that surface as cryptic chat errors.
     "OpenRouter": [
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "mistralai/mistral-nemo:free",
-        "google/gemini-2.0-flash-exp:free",
-        "deepseek/deepseek-chat-v3:free",
-        "qwen/qwen-2.5-72b-instruct:free",
-        "meta-llama/llama-3.1-8b-instruct:free",
+        "meta-llama/llama-3.3-70b-instruct",
         "anthropic/claude-3.5-sonnet",
         "openai/gpt-4o-mini",
+        "openai/gpt-4o",
+        "google/gemini-2.0-flash",
+        "mistralai/mistral-large",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemini-2.0-flash-exp:free",
     ],
     "OpenAI": [
         "gpt-4o-mini",
@@ -370,6 +373,38 @@ _MODEL_CATALOG: dict[str, list[str]] = {
 }
 
 _CUSTOM_MODEL_SENTINEL = "Other — type a custom model id"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_openrouter_catalog() -> list[str]:
+    """Pull the full list of OpenRouter model IDs from the public catalog
+    endpoint. Cached for an hour per Streamlit session so the dropdown doesn't
+    hit the network on every rerun. Returns [] on any failure — caller falls
+    back to the hardcoded `_MODEL_CATALOG["OpenRouter"]` in that case so the
+    picker keeps working offline."""
+    import httpx
+
+    try:
+        r = httpx.get("https://openrouter.ai/api/v1/models", timeout=8.0)
+        r.raise_for_status()
+        body = r.json()
+    except Exception:
+        return []
+    ids: list[str] = []
+    for item in body.get("data") or []:
+        mid = item.get("id")
+        if isinstance(mid, str) and mid:
+            ids.append(mid)
+    # Sort with the house favorites first (these lead the dropdown so users
+    # don't need to type immediately for the common picks), then alphabetical.
+    _priority = {
+        "meta-llama/llama-3.3-70b-instruct": 0,
+        "anthropic/claude-3.5-sonnet": 1,
+        "openai/gpt-4o-mini": 2,
+        "openai/gpt-4o": 3,
+        "google/gemini-2.0-flash": 4,
+    }
+    return sorted(ids, key=lambda m: (_priority.get(m, 1_000), m))
 
 
 # One-line description per task type, rendered in the Advanced expander so
@@ -409,18 +444,29 @@ def _current_model_for_picker(override) -> str | None:
 
 
 def _model_picker_bar() -> None:
-    """Compact bar above the chat area — provider + model dropdown + status.
+    """Compact bar rendered INSIDE Streamlit's fixed bottom container — sits
+    directly under the chat input bar, adjacent to where the user types. Uses
+    st._bottom (same private API as the New chat pill) so the picker stays
+    visible and positioned regardless of scroll / viewport height.
 
     Lets the user swap models without re-pasting the API key. Updates the
     session's LLM override via llm.set_model() on change; preserves whatever
-    api_key / base_url the override already carries. When the catalog
-    doesn't include the current model (e.g. a custom id from the API key
-    modal), the 'Other…' sentinel shows that and a text input lets the user
-    edit it in place.
+    api_key / base_url the override already carries. For OpenRouter, the
+    dropdown fetches the full public model catalog (~300 models) so any
+    available model is a type-to-filter away. Other providers fall back to
+    the hardcoded `_MODEL_CATALOG` shortlist.
     """
     override = llm.get_override()
     provider = _preset_for_url(override.base_url if override else None)
-    catalog = _MODEL_CATALOG.get(provider, []) or []
+    if provider == "OpenRouter":
+        # Dynamic fetch first, hardcoded fallback only if the network call
+        # failed. Streamlit's selectbox auto-enables a search filter once the
+        # option list grows past ~10 entries, giving free type-to-filter over
+        # the ~300-model OpenRouter catalog.
+        dynamic = _fetch_openrouter_catalog()
+        catalog = dynamic or _MODEL_CATALOG.get(provider, []) or []
+    else:
+        catalog = _MODEL_CATALOG.get(provider, []) or []
     options = [*catalog, _CUSTOM_MODEL_SENTINEL]
 
     current = _current_model_for_picker(override)
@@ -429,32 +475,36 @@ def _model_picker_bar() -> None:
         options.index(current) if current in options else (len(options) - 1 if is_custom else 0)
     )
 
-    icon_col, model_col, provider_col = st.columns([1, 6, 3])
-    with icon_col:
-        st.markdown(
-            "<div style='font-size: 1.4rem; line-height: 2.1rem; text-align: center;'>🧠</div>",
-            unsafe_allow_html=True,
-        )
-    with model_col:
-        picked = st.selectbox(
-            "Model",
-            options=options,
-            index=default_idx,
-            label_visibility="collapsed",
-            key="chat_model_picker",
-            help="Switches the model Stew uses for this session. All six task types share it.",
-        )
-    with provider_col:
-        st.markdown(
-            f"<div style='text-align: right; opacity: 0.65; line-height: 2.1rem;'>"
-            f"<small>{provider}</small></div>",
-            unsafe_allow_html=True,
-        )
+    # Render into the bottom container so the row sits under the chat_input
+    # bar. Private API (st._bottom) already used elsewhere in this file for
+    # the New chat pill — acceptable trade-off for the layout we want.
+    bar = st._bottom.container()
+    icon_col, model_col, provider_col = bar.columns([1, 6, 3])
+    icon_col.markdown(
+        "<div style='font-size: 1.4rem; line-height: 2.1rem; text-align: center;'>🧠</div>",
+        unsafe_allow_html=True,
+    )
+    picked = model_col.selectbox(
+        "Model",
+        options=options,
+        index=default_idx,
+        label_visibility="collapsed",
+        key="chat_model_picker",
+        help=(
+            "Switches the model Stew uses for this session. All six task types share it "
+            "unless you've configured per-task routing in LLM setup. Type to filter."
+        ),
+    )
+    provider_col.markdown(
+        f"<div style='text-align: right; opacity: 0.65; line-height: 2.1rem;'>"
+        f"<small>{provider}</small></div>",
+        unsafe_allow_html=True,
+    )
 
     # If 'Other…' is selected, surface a text input inline and use its value
     # as the effective pick. Empty custom → keep current.
     if picked == _CUSTOM_MODEL_SENTINEL:
-        custom = st.text_input(
+        custom = bar.text_input(
             "Custom model id",
             value=(current if is_custom else ""),
             placeholder=(
@@ -1284,9 +1334,7 @@ with st.sidebar:
 # Streamlit raises "only one dialog is allowed to be opened".
 if st.session_state.get("show_api_key", False):
     _api_key_dialog()
-elif st.session_state.get("show_guide", False) or not st.session_state.get(
-    "welcome_seen", False
-):
+elif st.session_state.get("show_guide", False) or not st.session_state.get("welcome_seen", False):
     _welcome_dialog()
 
 # When the review-queue toggle is on, the main area shows the approvals panel
@@ -1299,10 +1347,6 @@ if st.session_state.get("show_review"):
 if st.session_state.get("show_viz"):
     _render_viz_panel()
     st.stop()
-
-# Model picker bar — pinned above the chat area. Always visible on the chat
-# screen so the user sees + swaps the active model without leaving.
-_model_picker_bar()
 
 # Pending prompts come from suggestion-chip clicks; they short-circuit the
 # normal chat_input flow on the next rerun. Call st.chat_input up front so
@@ -1340,10 +1384,12 @@ else:
         else:
             _render_assistant(msg["content"], msg.get("traces"))
 
-# Centered "New chat" pill rendered INSIDE Streamlit's fixed bottom container,
-# directly under the chat input. Use the container's methods directly instead
-# of a `with` block — `with st._bottom:` didn't propagate context to st.columns
-# and was double-rendering during streaming.
+# Model picker + "New chat" pill rendered INSIDE Streamlit's fixed bottom
+# container, directly under the chat input. Use the container's methods
+# directly — `with st._bottom:` didn't propagate context to st.columns and
+# was double-rendering during streaming.
+_model_picker_bar()
+
 _nc_cols = st._bottom.columns([3, 2, 3])
 _nc_cols[1].button(
     "➕ New chat",
