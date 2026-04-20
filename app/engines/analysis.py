@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from loguru import logger
 
 from app.clients import duck
 
@@ -28,7 +29,25 @@ def ownership_breakdown() -> pd.DataFrame:
     Aggregates each team's table count, documentation coverage, avg
     description quality (if deep scan has run), and PII-table footprint.
     Tables with no owner are excluded here — see `orphans()` for those.
+
+    Uses `struct_extract` instead of dot-access on the owners struct so a
+    missing `displayName` or `name` field returns NULL instead of raising
+    a binder error. OpenMetadata's `/v1/tables?fields=owners` response
+    usually expands both, but ingestion-bot owners or certain legacy rows
+    can be missing `displayName`, which previously crashed the whole query
+    and silently returned an empty leaderboard.
     """
+    empty = pd.DataFrame(
+        columns=[
+            "team",
+            "team_slug",
+            "tables_owned",
+            "documented",
+            "coverage_pct",
+            "pii_tables",
+            "quality_avg",
+        ]
+    )
     try:
         has_cleaning = _has_cleaning_results()
         quality_join = ""
@@ -44,8 +63,21 @@ def ownership_breakdown() -> pd.DataFrame:
                 SELECT
                     t.fullyQualifiedName AS fqn,
                     t.description,
-                    CASE WHEN len(t.owners) > 0 THEN t.owners[1].displayName ELSE NULL END AS team,
-                    CASE WHEN len(t.owners) > 0 THEN t.owners[1].name ELSE NULL END AS team_name,
+                    CASE
+                        WHEN len(t.owners) = 0 THEN NULL
+                        ELSE COALESCE(
+                            CAST(struct_extract(t.owners[1], 'displayName') AS VARCHAR),
+                            CAST(struct_extract(t.owners[1], 'name') AS VARCHAR),
+                            CAST(struct_extract(t.owners[1], 'id') AS VARCHAR)
+                        )
+                    END AS team,
+                    CASE
+                        WHEN len(t.owners) = 0 THEN NULL
+                        ELSE COALESCE(
+                            CAST(struct_extract(t.owners[1], 'name') AS VARCHAR),
+                            CAST(struct_extract(t.owners[1], 'id') AS VARCHAR)
+                        )
+                    END AS team_slug,
                     CASE WHEN t.description IS NULL OR length(t.description) = 0 THEN 0 ELSE 1 END AS documented
                 FROM om_tables t
             ),
@@ -56,7 +88,7 @@ def ownership_breakdown() -> pd.DataFrame:
             )
             SELECT
                 o.team AS team,
-                o.team_name AS team_slug,
+                o.team_slug AS team_slug,
                 COUNT(*) AS tables_owned,
                 SUM(o.documented) AS documented,
                 ROUND(100.0 * SUM(o.documented) / COUNT(*), 1) AS coverage_pct,
@@ -66,21 +98,14 @@ def ownership_breakdown() -> pd.DataFrame:
             LEFT JOIN pii_tables p ON p.table_fqn = o.fqn
             {quality_join}
             WHERE o.team IS NOT NULL
-            GROUP BY o.team, o.team_name
+            GROUP BY o.team, o.team_slug
             ORDER BY coverage_pct DESC, tables_owned DESC
         """)
-    except Exception:
-        return pd.DataFrame(
-            columns=[
-                "team",
-                "team_slug",
-                "tables_owned",
-                "documented",
-                "coverage_pct",
-                "pii_tables",
-                "quality_avg",
-            ]
-        )
+    except Exception as e:
+        # Surface the actual error so "Stewardship tab is empty" doesn't look
+        # like a data-missing state when it's really a SQL / schema issue.
+        logger.warning(f"ownership_breakdown query failed: {e}")
+        return empty
 
 
 def orphans() -> pd.DataFrame:

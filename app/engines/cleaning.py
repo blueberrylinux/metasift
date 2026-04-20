@@ -150,11 +150,61 @@ def detect_naming_clusters(similarity_threshold: int = 75) -> list[dict]:
 # ── Description quality scoring ────────────────────────────────────────────────
 
 
+def _extract_json_objects(text: str) -> list[dict]:
+    """Pull complete `{...}` object literals out of a possibly-truncated string.
+
+    Used as a fallback when the LLM's response to a JSON-array request gets
+    cut off mid-rationale by `max_tokens` — we'd previously drop every score
+    on the floor when that happened (quality → 0.0/5 in the UI). A
+    char-by-char scan that respects quoted strings (with escapes) lets us
+    salvage every complete object up to the truncation point.
+    """
+    out: list[dict] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for i, c in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            continue
+        if c == '"':
+            in_string = True
+            continue
+        if c == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    obj = json.loads(text[start : i + 1])
+                    if isinstance(obj, dict):
+                        out.append(obj)
+                except json.JSONDecodeError:
+                    pass
+                start = -1
+    return out
+
+
 def score_descriptions_batch(descriptions: list[dict]) -> list[dict]:
     """Score a batch of descriptions 1-5 on specificity/accuracy/completeness.
 
     Input: [{fqn, description, columns}, ...]
     Output: [{fqn, score, rationale}, ...]
+
+    Tolerant to LLM output truncation: if the full JSON array doesn't parse
+    (free-tier models can hit max_tokens mid-rationale), we salvage complete
+    `{index, score, rationale}` objects via a char-level scan. Partial
+    coverage beats zero coverage — the quality metric stays meaningful even
+    when the scoring run is only half-finished.
     """
     if not descriptions:
         return []
@@ -166,18 +216,34 @@ def score_descriptions_batch(descriptions: list[dict]) -> list[dict]:
     prompt = (
         "Score each description 1-5 on specificity, accuracy, and completeness. "
         "1 = useless (e.g. 'data table'), 5 = excellent (specific, complete, accurate).\n\n"
+        "KEEP EACH RATIONALE UNDER 40 CHARACTERS — the array must fit in 4096 output "
+        "tokens total, so terse reasons only (e.g. 'too vague', 'no columns described', "
+        "'placeholder text').\n\n"
         f"{items}\n\n"
         "Respond ONLY with a JSON array:\n"
         '[{"index": int, "score": int, "rationale": str}, ...]'
     )
     result = llm.invoke(prompt)
     text = result.content if hasattr(result, "content") else str(result)
+    cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+
+    parsed: list[dict] = []
     try:
-        text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        parsed = json.loads(text)
+        whole = json.loads(cleaned)
+        if isinstance(whole, list):
+            parsed = [x for x in whole if isinstance(x, dict)]
     except json.JSONDecodeError:
-        logger.warning(f"Could not parse scoring response: {text[:200]}")
-        return []
+        # Truncated or malformed — salvage whatever complete objects we can.
+        parsed = _extract_json_objects(cleaned)
+        if parsed:
+            logger.info(
+                f"Scoring JSON was truncated; salvaged {len(parsed)}/{len(descriptions)} "
+                f"complete entries from partial response."
+            )
+        else:
+            logger.warning(f"Could not parse scoring response: {cleaned[:200]}")
+            return []
+
     out = []
     for item in parsed:
         idx = item.get("index", 0) - 1
