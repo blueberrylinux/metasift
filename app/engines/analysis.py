@@ -53,9 +53,13 @@ def ownership_breakdown() -> pd.DataFrame:
         quality_join = ""
         quality_select = "NULL AS quality_avg"
         if has_cleaning:
+            # Join on `o.fqn` (the outer CTE alias) — not `t.fullyQualifiedName`.
+            # The `t` alias only exists inside the `owned` CTE; the outer query
+            # can't reference it, and DuckDB raises a Binder Error the moment
+            # cleaning_results exists and this branch fires.
             quality_join = """
                 LEFT JOIN cleaning_results cr
-                  ON cr.fqn = t.fullyQualifiedName
+                  ON cr.fqn = o.fqn
             """
             quality_select = "AVG(cr.quality_score) AS quality_avg"
         return duck.query(f"""
