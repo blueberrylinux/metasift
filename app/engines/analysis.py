@@ -395,6 +395,118 @@ def dq_summary() -> dict[str, int]:
     }
 
 
+def pii_propagation(max_depth: int = 10) -> dict:
+    """Classify every table by PII governance status, surface propagation edges.
+
+    "Origin" tables have at least one PII.Sensitive column directly on them.
+    "Tainted" tables don't carry PII themselves but are reachable downstream
+    from an origin via lineage — so a compliance officer asking *"where does
+    PII reach?"* needs to know about them. Everything else is "clean".
+
+    Returns:
+      {
+        'origins':            dict[fqn, list[str]],  # fqn → its PII column names
+        'tainted':            list[fqn],             # fqn reachable from some origin
+        'clean':              list[fqn],             # everything else
+        'all_tables':         list[fqn],
+        'edges':              list[(src, dst)],      # every om_lineage edge
+        'propagation_edges':  list[(src, dst)],      # edges whose src is origin|tainted
+      }
+    Empty lists everywhere if lineage/columns aren't loaded.
+    """
+    empty = {
+        "origins": {},
+        "tainted": [],
+        "clean": [],
+        "all_tables": [],
+        "edges": [],
+        "propagation_edges": [],
+    }
+
+    try:
+        tables_df = duck.query("SELECT fullyQualifiedName AS fqn FROM om_tables ORDER BY fqn")
+    except Exception:
+        return empty
+    all_tables = tables_df["fqn"].tolist() if not tables_df.empty else []
+    if not all_tables:
+        return empty
+
+    # Origins: one row per (table_fqn, column_name) that carries PII.Sensitive.
+    try:
+        origin_df = duck.query(
+            """
+            SELECT table_fqn, name AS column_name
+            FROM om_columns
+            WHERE list_contains(tags, 'PII.Sensitive')
+              AND table_fqn IS NOT NULL
+            ORDER BY table_fqn, column_name
+            """
+        )
+    except Exception:
+        origin_df = pd.DataFrame(columns=["table_fqn", "column_name"])
+
+    origins: dict[str, list[str]] = {}
+    for _, r in origin_df.iterrows():
+        origins.setdefault(r["table_fqn"], []).append(r["column_name"])
+
+    # Edges — may be empty.
+    try:
+        edges_df = duck.query("SELECT source_fqn, target_fqn FROM om_lineage")
+    except Exception:
+        edges_df = pd.DataFrame(columns=["source_fqn", "target_fqn"])
+    edges: list[tuple[str, str]] = [
+        (r["source_fqn"], r["target_fqn"]) for _, r in edges_df.iterrows()
+    ]
+
+    # Recursive downstream closure starting from every origin. The initial set
+    # carries depth=0; any node appearing only with depth>0 is "tainted". We
+    # still need origins as the starting set so the CTE is well-formed, but
+    # classify them back out below.
+    reachable: set[str] = set()
+    if origins and edges:
+        origin_list = list(origins.keys())
+        placeholders = ",".join(["?"] * len(origin_list))
+        try:
+            reach_df = duck.query(
+                f"""
+                WITH RECURSIVE downstream(node, depth) AS (
+                    SELECT node, 0
+                    FROM (SELECT unnest([{placeholders}]) AS node) seed
+                    UNION
+                    SELECT l.target_fqn, d.depth + 1
+                    FROM om_lineage l
+                    JOIN downstream d ON l.source_fqn = d.node
+                    WHERE d.depth < ?
+                )
+                SELECT DISTINCT node FROM downstream
+                """,
+                [*origin_list, int(max_depth)],
+            )
+            reachable = set(reach_df["node"].tolist()) if not reach_df.empty else set()
+        except Exception:
+            reachable = set(origins.keys())  # no lineage → only origins are "reached"
+
+    origin_set = set(origins.keys())
+    tainted_set = reachable - origin_set
+
+    # Propagation edges: any edge whose source is in origins ∪ tainted. (Edges
+    # from clean→tainted can't exist — tainted is reachable-from-origin, so
+    # its predecessor set lives inside origin∪tainted too.)
+    propagating = origin_set | tainted_set
+    propagation_edges = [(s, t) for (s, t) in edges if s in propagating]
+
+    clean = [fqn for fqn in all_tables if fqn not in origin_set and fqn not in tainted_set]
+
+    return {
+        "origins": origins,
+        "tainted": sorted(tainted_set),
+        "clean": sorted(clean),
+        "all_tables": all_tables,
+        "edges": edges,
+        "propagation_edges": propagation_edges,
+    }
+
+
 def tag_conflicts() -> pd.DataFrame:
     """Column names whose tag assignment varies across tables.
 

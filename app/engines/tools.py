@@ -374,6 +374,9 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
 - Compute blast radius for a table (direct + transitive downstream, weighted by PII)
 - Rank the whole catalog by downstream impact
 
+**Lineage governance**
+- Trace PII propagation across the catalog: origin tables, tainted downstream, and the lineage edges that carry sensitive data
+
 **Data quality explanations**
 - List every failing DQ check and turn each into plain English: what it checks,
   what the likely root cause is, and the single next step to take
@@ -692,6 +695,79 @@ def find_dq_gaps(severity: str = "") -> str:
         for r in rows:
             lines.extend(_render_dq_recommendation(r))
         lines.append("")
+
+    return "\n".join(lines)
+
+
+@tool
+def pii_propagation() -> str:
+    """Show where PII propagates across the catalog via lineage.
+
+    ★ Use this for _"where does PII propagate?"_, _"which tables inherit PII
+      from upstream?"_, _"PII governance view"_, _"which downstream tables
+      carry sensitive data?"_, or any compliance / privacy question about
+      sensitive-data flow. ★
+
+    Returns a markdown summary with three sections:
+      1. **Origins** — tables with at least one PII.Sensitive column, listed
+         with the specific columns.
+      2. **Tainted downstream** — tables that don't carry PII themselves but
+         are reachable via lineage from at least one origin, so a privacy
+         officer needs to know about them.
+      3. **Clean** — count only (listing every clean table is noise).
+
+    Pairs with the 🛡️ Governance viz tab, which renders the same data as a
+    lineage DAG with origin nodes in red, tainted in amber, propagation
+    edges highlighted.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+
+    prop = analysis.pii_propagation()
+    origins = prop["origins"]
+    tainted = prop["tainted"]
+    clean = prop["clean"]
+
+    if not origins:
+        return (
+            "No PII.Sensitive columns in the catalog — nothing to trace. "
+            "Run the **🔐 PII scan** in the sidebar to classify columns first."
+        )
+
+    lines: list[str] = [
+        "**PII propagation across the catalog**",
+        "",
+        f"- {len(origins)} origin table(s) · "
+        f"{len(tainted)} tainted downstream · "
+        f"{len(clean)} clean · "
+        f"{len(prop['propagation_edges'])} propagation edge(s)",
+        "",
+        "### 🔴 Origins (PII.Sensitive columns present)",
+    ]
+    for fqn in sorted(origins.keys()):
+        short = ".".join(fqn.split(".")[-2:])
+        cols = ", ".join(f"`{c}`" for c in origins[fqn])
+        lines.append(f"- `{short}` — {cols}")
+
+    if tainted:
+        lines.extend(
+            [
+                "",
+                "### 🟠 Tainted downstream (reachable via lineage)",
+            ]
+        )
+        for fqn in tainted[:20]:
+            short = ".".join(fqn.split(".")[-2:])
+            lines.append(f"- `{short}`")
+        if len(tainted) > 20:
+            lines.append(f"- _…and {len(tainted) - 20} more_")
+    else:
+        lines.extend(
+            [
+                "",
+                "_No downstream propagation — every origin is a leaf in the lineage graph._",
+            ]
+        )
 
     return "\n".join(lines)
 
@@ -1248,6 +1324,7 @@ ALL_TOOLS = [
     about_metasift,
     ownership_report,
     impact_check,
+    pii_propagation,
     dq_impact,
     dq_risk_catalog,
     dq_failures_summary,

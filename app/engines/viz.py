@@ -197,6 +197,205 @@ def lineage_dag() -> go.Figure | None:
     return fig
 
 
+# ── 2b. Lineage governance — PII propagation overlay ────────────────────────
+
+
+def governance_lineage_dag() -> go.Figure | None:
+    """Lineage DAG overlay that answers *"where does PII propagate?"*
+
+    Reuses the same schema-column layout as `lineage_dag()` but recolors:
+      - 🔴 Origin    — table has ≥1 PII.Sensitive column directly
+      - 🟠 Tainted   — reachable via lineage from an origin
+      - ⚪ Clean     — neither
+    Edges from origin/tainted nodes are drawn solid red (propagation path);
+    other edges fade to gray so the propagation chain pops visually.
+    """
+    try:
+        tables = duck.query(
+            "SELECT fullyQualifiedName AS fqn, description FROM om_tables ORDER BY fqn"
+        )
+    except Exception:
+        return None
+    if tables.empty:
+        return None
+
+    prop = analysis.pii_propagation()
+    origins = prop["origins"]
+    tainted = set(prop["tainted"])
+
+    # No PII in the catalog → view has nothing to say; short-circuit so the tab
+    # renders an empty-state hint instead of a normal-looking DAG.
+    if not origins and not tainted:
+        return None
+
+    # Layout: identical rules to lineage_dag() — schemas as left-to-right
+    # columns, tables stacked vertically inside each column.
+    schemas: dict[str, list[str]] = {}
+    for _, r in tables.iterrows():
+        schemas.setdefault(_schema_of(r["fqn"]), []).append(r["fqn"])
+    positions: dict[str, tuple[float, float]] = {}
+    schema_order = sorted(schemas.keys())
+    for x_idx, schema in enumerate(schema_order):
+        members = sorted(schemas[schema])
+        n = len(members)
+        for y_idx, fqn in enumerate(members):
+            y = (y_idx - (n - 1) / 2.0) * 1.5
+            positions[fqn] = (float(x_idx) * 2.5, y)
+
+    # Two edge traces — propagation (red solid) vs other (faded gray). Plotly's
+    # continuous-scatter-with-None-breaks trick draws them in one go per trace.
+    propagation_edges = {tuple(e) for e in prop["propagation_edges"]}
+    prop_x: list[float | None] = []
+    prop_y: list[float | None] = []
+    other_x: list[float | None] = []
+    other_y: list[float | None] = []
+    for src, dst in prop["edges"]:
+        if src not in positions or dst not in positions:
+            continue
+        x0, y0 = positions[src]
+        x1, y1 = positions[dst]
+        if (src, dst) in propagation_edges:
+            prop_x.extend([x0, x1, None])
+            prop_y.extend([y0, y1, None])
+        else:
+            other_x.extend([x0, x1, None])
+            other_y.extend([y0, y1, None])
+
+    other_trace = go.Scatter(
+        x=other_x,
+        y=other_y,
+        mode="lines",
+        line={"color": "rgba(100,116,139,0.25)", "width": 1.2},
+        hoverinfo="skip",
+        showlegend=False,
+    )
+    prop_trace = go.Scatter(
+        x=prop_x,
+        y=prop_y,
+        mode="lines",
+        line={"color": "rgba(239,68,68,0.85)", "width": 2.4},
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+    # Node styling per governance class.
+    class_color = {
+        "origin": "#ef4444",  # red-500
+        "tainted": "#f59e0b",  # amber-500
+        "clean": "#475569",  # slate-600
+    }
+
+    def _classify(fqn: str) -> str:
+        if fqn in origins:
+            return "origin"
+        if fqn in tainted:
+            return "tainted"
+        return "clean"
+
+    node_x, node_y, hover_text, node_labels, node_colors, node_sizes = [], [], [], [], [], []
+    for _, r in tables.iterrows():
+        fqn = r["fqn"]
+        if fqn not in positions:
+            continue
+        x, y = positions[fqn]
+        klass = _classify(fqn)
+        node_x.append(x)
+        node_y.append(y)
+        node_colors.append(class_color[klass])
+
+        # Origin tables get larger markers — they're the "where does PII start?"
+        # answer and should pop visually.
+        node_sizes.append(24 if klass == "origin" else 18)
+        node_labels.append(_short_of(fqn).split(".")[-1])
+
+        if klass == "origin":
+            pii_cols = ", ".join(f"<code>{c}</code>" for c in origins[fqn])
+            hover = (
+                f"<b>{_short_of(fqn)}</b><br>"
+                f"<span style='color:#fca5a5'>🔴 PII origin</span><br>"
+                f"Sensitive columns: {pii_cols}"
+            )
+        elif klass == "tainted":
+            hover = (
+                f"<b>{_short_of(fqn)}</b><br>"
+                f"<span style='color:#fbbf24'>🟠 PII-tainted</span><br>"
+                f"Reachable from an origin via lineage"
+            )
+        else:
+            hover = f"<b>{_short_of(fqn)}</b><br><span style='color:#94a3b8'>⚪ clean</span>"
+        hover_text.append(hover)
+
+    node_trace = go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode="markers+text",
+        text=node_labels,
+        textposition="bottom center",
+        textfont={"size": 11, "color": "rgba(226,232,240,0.9)"},
+        hovertext=hover_text,
+        hoverinfo="text",
+        marker={
+            "size": node_sizes,
+            "color": node_colors,
+            "line": {"color": "rgba(15,23,42,0.8)", "width": 1.5},
+        },
+        showlegend=False,
+    )
+
+    # Schema labels at the top of each column, same as lineage_dag().
+    annotations = [
+        {
+            "x": x_idx * 2.5,
+            "y": max((positions[fqn][1] for fqn in schemas[schema]), default=0) + 1.2,
+            "text": f"<b>{schema}</b>",
+            "showarrow": False,
+            "font": {"size": 13, "color": "rgba(148,163,184,0.9)"},
+        }
+        for x_idx, schema in enumerate(schema_order)
+    ]
+
+    # Inline legend — three colored squares + counts — bottom-left corner.
+    origin_n = len(origins)
+    tainted_n = len(tainted)
+    clean_n = len(prop["clean"])
+    legend_html = (
+        f"<span style='color:#ef4444'>●</span> <b>{origin_n}</b> origin "
+        f" · <span style='color:#f59e0b'>●</span> <b>{tainted_n}</b> tainted "
+        f" · <span style='color:#475569'>●</span> <b>{clean_n}</b> clean "
+        f" · <span style='color:#ef4444'>━</span> propagation edge"
+    )
+
+    fig = go.Figure(data=[other_trace, prop_trace, node_trace])
+    fig.update_layout(
+        height=540,
+        margin={"t": 60, "b": 40, "l": 20, "r": 20},
+        xaxis={"visible": False},
+        yaxis={"visible": False},
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        annotations=[
+            *annotations,
+            {
+                "x": 0,
+                "y": -0.08,
+                "xref": "paper",
+                "yref": "paper",
+                "text": legend_html,
+                "showarrow": False,
+                "font": {"size": 12, "color": "rgba(226,232,240,0.85)"},
+                "align": "left",
+                "xanchor": "left",
+            },
+        ],
+        title=(
+            "Lineage governance — where does PII propagate? "
+            f"({origin_n} origin · {tainted_n} tainted · "
+            f"{len(propagation_edges)} propagation edge(s))"
+        ),
+    )
+    return fig
+
+
 # ── 3. Catalog treemap (schema → table → columns) ───────────────────────────
 
 
@@ -879,6 +1078,11 @@ def dq_risk_bars() -> go.Figure | None:
 ALL_VIZ: list[tuple[str, str, callable]] = [
     ("🎯 Score gauge", "composite score as a speedometer", composite_gauge),
     ("🔗 Lineage", "catalog dependency graph", lineage_dag),
+    (
+        "🛡️ Governance",
+        "where does PII propagate? — origins, tainted downstream, and the edges that carry it",
+        governance_lineage_dag,
+    ),
     ("💥 Blast radius", "top tables ranked by downstream impact", blast_radius_bars),
     ("👥 Stewardship", "per-team scorecard + orphan count", stewardship_leaderboard),
     ("🗺️ Catalog map", "treemap by schema / table / PII share", catalog_treemap),
