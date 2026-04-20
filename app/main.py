@@ -223,6 +223,66 @@ SUGGESTIONS: list[tuple[str, str]] = [
 ]
 
 
+# ── Welcome / Guide dialog ─────────────────────────────────────────────────
+# Shown automatically on first load of the session, and on-demand via the
+# 📖 Guide sidebar button. "welcome_seen" is session-scoped (not persisted
+# to disk) — a fresh browser session gets the intro again, which is the
+# right default for a shared demo environment.
+
+
+@st.dialog("Welcome to MetaSift", width="large")
+def _welcome_dialog() -> None:
+    st.markdown(
+        """
+**MetaSift** is an AI-powered metadata analyst and steward for OpenMetadata.
+
+Documentation coverage is a lie — a catalog can be 100% documented and still
+full of wrong, stale, or conflicting metadata. MetaSift introduces a **Composite Score** that measures what actually matters.
+
+### The four engines
+
+- **Analysis** — aggregate SQL analytics over your catalog (coverage, tag
+  conflicts, lineage impact, composite score).
+- **Stewardship** — auto-documents undocumented tables, detects PII, and
+  recommends data quality tests that should exist but don't.
+- **Cleaning** — detects stale descriptions, scores quality 1–5, explains
+  failing DQ checks in plain English, and quantifies DQ blast radius
+  across lineage.
+- **Interface** — meet **Stew**, the AI steward you'll chat with. Ask
+  anything in natural language.
+
+### Quick start
+
+1. Click **🔄 Refresh metadata** in the sidebar to pull your catalog into
+   MetaSift's in-memory store.
+2. Run **🔬 Deep scan** (stale detection + quality scoring),
+   **🔐 PII scan**, or **🧪 Explain DQ failures** to populate the richer
+   metrics.
+3. Ask Stew things like _"what's my composite score?"_, _"find tag
+   conflicts"_, or _"why is my email_not_null check failing?"_.
+
+### Things worth trying
+
+- Click **📊 Visualizations** once metadata is loaded — 9 interactive
+  tabs including lineage DAG, blast radius, DQ risk, and DQ gaps.
+- Click **📋 Review queue** to approve / edit / reject MetaSift's
+  suggested descriptions and PII tags before anything is written back
+  to OpenMetadata.
+- Click **📄 Export report** to download a markdown summary of catalog
+  health suitable for sharing with a data team.
+
+_This guide is always reachable via the **📖 Guide** button in the sidebar._
+        """
+    )
+    st.divider()
+    _, right = st.columns([4, 1])
+    with right:
+        if st.button("Got it", type="primary", width="stretch"):
+            st.session_state.welcome_seen = True
+            st.session_state.show_guide = False
+            st.rerun()
+
+
 def _reset_chat() -> None:
     st.session_state.messages = []
     st.session_state.pop("pending_prompt", None)
@@ -789,6 +849,14 @@ with st.sidebar:
         except Exception as e:
             st.caption(f"_Report unavailable: {e}_")
 
+    if st.button(
+        "📖 Guide",
+        width="stretch",
+        help="Show the MetaSift intro and quick-start",
+    ):
+        st.session_state.show_guide = True
+        st.rerun()
+
     # Subtle status row at the bottom of the sidebar
     st.divider()
     s1, s2 = st.columns(2)
@@ -797,6 +865,14 @@ with st.sidebar:
 
 
 # ── Main area ──────────────────────────────────────────────────────────────
+# Welcome / Guide dialog fires on first session load and on-demand whenever
+# the Guide sidebar button sets show_guide=True. Placed before the review /
+# viz short-circuits so the dialog is reachable from any screen.
+if not st.session_state.get("welcome_seen", False) or st.session_state.get(
+    "show_guide", False
+):
+    _welcome_dialog()
+
 # When the review-queue toggle is on, the main area shows the approvals panel
 # instead of the welcome / chat view. Chat state is preserved — toggling back
 # returns the user to their conversation exactly as they left it.
