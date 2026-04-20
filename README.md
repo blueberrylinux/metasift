@@ -16,7 +16,7 @@ Existing tools generate new metadata (auto-documentation) or keep metadata fresh
 
 MetaSift sits on top of OpenMetadata and adds four integrated engines plus a rich interaction surface:
 
-**Analysis** — Treats the catalog as a dataset. Pulls metadata into DuckDB, runs aggregate analytics, and computes a **composite quality score** weighted across coverage, accuracy, consistency, and description quality. Also computes blast-radius (downstream impact) and per-team stewardship breakdowns.
+**Analysis** — Treats the catalog as a dataset. Pulls metadata into DuckDB, runs aggregate analytics, and computes a **composite score** weighted across coverage, accuracy, consistency, and description quality. Also computes blast-radius (downstream impact) and per-team stewardship breakdowns.
 
 **Cleaning** — The quality-audit differentiator. Detects stale descriptions that no longer match column metadata, finds classification conflicts across schemas, scores descriptions 1-5, clusters similar-but-different column names via fuzzy matching, and heuristically classifies PII columns with a 5-layer rule set (zero LLM cost).
 
@@ -82,7 +82,7 @@ These capabilities don't exist in OpenMetadata, Collate, or any other catalog to
 | NL chat interface | ❌ | ✅ (AskCollate) | ✅ (Stew) |
 | Auto-generated charts | ❌ | ✅ | ✅ (7-tab plotly panel) |
 | Lineage exploration | ✅ (UI only) | ✅ | ✅ (chat-driven, full DAG viz) |
-| Data Insights / health metrics | ✅ (coverage, ownership) | ✅ | ✅ (+ composite quality score) |
+| Data Insights / health metrics | ✅ (coverage, ownership) | ✅ | ✅ (+ composite score) |
 | Review workflow for AI changes | ❌ | ✅ | ✅ |
 | **Stale description detection** | ❌ | ❌ | **✅ MetaSift only** |
 | **Description quality scoring** | ❌ | ❌ | **✅ MetaSift only** |

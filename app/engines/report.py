@@ -45,7 +45,7 @@ def generate_markdown_report() -> str:
     # ── Composite score ────────────────────────────────────────────────────
     try:
         score = analysis.composite_score()
-        lines.append("## Composite Quality Score")
+        lines.append("## Composite Score")
         lines.append("")
         lines.append(f"### **{score['composite']}% / 100**")
         lines.append("")

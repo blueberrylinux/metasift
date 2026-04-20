@@ -4,7 +4,7 @@
 
 MetaSift is an AI-powered metadata analyst and steward for OpenMetadata. Built for the WeMakeDevs x OpenMetadata "Back to the Metadata" hackathon. Solo developer project.
 
-Core thesis: Documentation coverage is a lie. A catalog can be 100% documented and still full of wrong, stale, conflicting metadata. MetaSift introduces a composite quality score that measures what actually matters.
+Core thesis: Documentation coverage is a lie. A catalog can be 100% documented and still full of wrong, stale, conflicting metadata. MetaSift introduces a composite score that measures what actually matters.
 
 ## Architecture — Four Engines
 
@@ -45,7 +45,7 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 - `docker-compose.yml` — MySQL + Elasticsearch + migrate + OpenMetadata server
 - `Makefile` — make install, stack-up, stack-down, seed, run, lint, test
 
-## Composite Quality Score Formula
+## Composite Score Formula
 
 - Documentation coverage (30%): % tables with descriptions
 - Description accuracy (30%): % non-stale descriptions (needs cleaning engine)

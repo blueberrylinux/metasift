@@ -36,7 +36,7 @@ MetaSift measures what documentation coverage alone misses: **stale, wrong,
 and conflicting metadata**. It sits on top of OpenMetadata and adds four
 **engines** — Analysis, Stewardship, Cleaning, and Interface (that's you).
 
-The headline metric is the **Composite Quality Score** (0-100), weighted:
+The headline metric is the **Composite Score** (0-100), weighted:
 30% coverage + 30% accuracy + 20% consistency + 20% description quality.
 
 For anything deeper — the formula details, engine internals, setup steps,

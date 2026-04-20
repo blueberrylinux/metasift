@@ -255,11 +255,11 @@ _ABOUT_TOPICS = {
 
 The core thesis: _documentation coverage is a lie._ A catalog can be 100%
 documented and still full of **wrong, stale, and conflicting** metadata.
-MetaSift introduces a composite quality score that measures what actually matters.
+MetaSift introduces a composite score that measures what actually matters.
 
 It sits on top of an OpenMetadata deployment, pulls catalog metadata via REST,
 analyzes it with four specialized engines, and writes improvements back.""",
-    "composite_score": """**Composite Quality Score** — MetaSift's headline metric (0-100).
+    "composite_score": """**Composite Score** — MetaSift's headline metric (0-100).
 
 Weighted combination of four sub-metrics:
 
@@ -356,7 +356,7 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
 **Quality analysis**
 - Measure documentation coverage per schema
 - Spot columns tagged inconsistently across tables (tag conflicts)
-- Compute the composite quality score (0-100)
+- Compute the composite score (0-100)
 - Surface naming drift (`customer_id` vs `cust_id` vs `cid`)
 
 **Description cleaning**

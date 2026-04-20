@@ -64,7 +64,7 @@ def composite_gauge() -> go.Figure | None:
                     "value": 80,
                 },
             },
-            title={"text": "Composite Quality Score<br><sub>target: 80%</sub>"},
+            title={"text": "Composite Score<br><sub>target: 80%</sub>"},
         )
     )
     fig.update_layout(height=380, margin={"t": 50, "b": 20, "l": 20, "r": 20})

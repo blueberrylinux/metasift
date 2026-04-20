@@ -54,6 +54,65 @@ st.markdown(
     line-height: 1.45;
     font-size: 0.98rem;
 }
+/* ── Compact sidebar — fit all controls in one frame ───────────────── */
+section[data-testid="stSidebar"] hr {
+    margin: 0.4rem 0 !important;
+}
+section[data-testid="stSidebar"] .stButton > button,
+section[data-testid="stSidebar"] .stDownloadButton > button {
+    padding: 0.25rem 0.75rem;
+    min-height: 1.9rem;
+    font-size: 0.88rem;
+}
+section[data-testid="stSidebar"] div[data-testid="stMetricValue"] {
+    font-size: 1.1rem;
+}
+section[data-testid="stSidebar"] div[data-testid="stMetricLabel"] p {
+    font-size: 0.72rem;
+}
+/* Pull sidebar content flush to the top of the panel — Streamlit defaults
+   to ~6rem of top padding via nav/header spacing; kill it. */
+section[data-testid="stSidebar"] > div:first-child,
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    padding-top: 0 !important;
+}
+section[data-testid="stSidebarHeader"],
+section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
+    padding: 0.15rem 0.5rem !important;
+    min-height: 0 !important;
+    height: auto !important;
+}
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {
+    padding-top: 0 !important;
+}
+/* MetaSift header — horizontal logo + text, flush to the very top */
+.ms-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0 0 0.5rem 0;
+    margin-top: -1.25rem;
+}
+.ms-header img {
+    width: 58px;
+    height: 58px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    object-fit: contain;
+}
+.ms-header .ms-title {
+    font-size: 1.55rem;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+}
+.ms-header .ms-tag {
+    opacity: 0.6;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    margin-top: 0.15rem;
+}
 </style>
     """,
     unsafe_allow_html=True,
@@ -157,7 +216,7 @@ def _extract_text(content) -> str:
 
 
 SUGGESTIONS: list[tuple[str, str]] = [
-    ("📊 What's my composite quality score?", "What's my composite quality score?"),
+    ("📊 What's my composite score?", "What's my composite score?"),
     ("🧹 Find stale descriptions", "Help me find stale descriptions in my catalog."),
     ("🏷️ Check for tag conflicts", "Are there any tag conflicts I should know about?"),
     ("📖 What is MetaSift?", "What is MetaSift and how does it work?"),
@@ -167,20 +226,12 @@ SUGGESTIONS: list[tuple[str, str]] = [
 def _reset_chat() -> None:
     st.session_state.messages = []
     st.session_state.pop("pending_prompt", None)
+    st.session_state.show_review = False
+    st.session_state.show_viz = False
 
 
 if "messages" not in st.session_state:
     _reset_chat()
-
-# Handle a stop request (button was clicked during a previous run).
-# Clicking Stop in Streamlit triggers a rerun which cancels the in-flight
-# stream; here we clean up the dangling user message so the UI doesn't
-# look broken.
-if st.session_state.pop("stop_requested", False):
-    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-        st.session_state.messages.append({"role": "assistant", "content": "_⏹ Stopped._"})
-    st.session_state.pop("pending_prompt", None)
-
 
 # ── Review queue ───────────────────────────────────────────────────────────
 # Pending suggestions from the cleaning engine (stale descriptions, stored in
@@ -515,13 +566,12 @@ with st.sidebar:
     if LOGO_B64:
         st.markdown(
             f"""
-            <div style="text-align: center; margin: -0.9rem 0 0.25rem 0;">
-                <img src="data:image/png;base64,{LOGO_B64}" width="92"
-                     style="border-radius: 10px;" />
-                <h2 style="margin: 0.35rem 0 0 0; font-size: 1.55rem;">MetaSift</h2>
-                <p style="margin: 0.15rem 0 0.6rem 0; opacity: 0.55; font-size: 0.82rem;">
-                    AI-powered metadata analyst &amp; steward
-                </p>
+            <div class="ms-header">
+                <img src="data:image/png;base64,{LOGO_B64}" />
+                <div>
+                    <div class="ms-title">MetaSift</div>
+                    <div class="ms-tag">AI-powered metadata analyst &amp; steward</div>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -529,10 +579,6 @@ with st.sidebar:
     else:
         st.markdown("## 🧹 MetaSift")
         st.caption("AI-powered metadata analyst & steward")
-
-    if st.button("➕ New chat", use_container_width=True, help="Start a fresh chat"):
-        _reset_chat()
-        st.rerun()
 
     st.divider()
 
@@ -548,7 +594,11 @@ with st.sidebar:
             m2.metric("Accuracy", f"{score['accuracy']}%", help="Non-stale descriptions")
             m3, m4 = st.columns(2)
             m3.metric("Consistency", f"{score['consistency']}%", help="Conflict-free tags")
-            m4.metric("Quality", f"{score['quality']}%", help="Mean description quality")
+            m4.metric(
+                "Quality",
+                f"{score['quality']}%",
+                help="Mean description quality (1-5 score, normalized to 0-100 — populated by Deep scan)",
+            )
 
             with st.expander("📊 Coverage by schema", expanded=False):
                 cov_df = analysis.documentation_coverage()
@@ -699,9 +749,13 @@ if st.session_state.get("show_viz"):
     st.stop()
 
 # Pending prompts come from suggestion-chip clicks; they short-circuit the
-# normal chat_input flow on the next rerun.
+# normal chat_input flow on the next rerun. Call st.chat_input up front so
+# we know whether the user has just submitted text — prevents the welcome
+# hero from flashing underneath the streaming response on first submission.
 pending_prompt = st.session_state.pop("pending_prompt", None)
-show_welcome = not st.session_state.messages and not pending_prompt
+typed_input = st.chat_input("Ask Stew…")
+user_input = pending_prompt or typed_input
+show_welcome = not st.session_state.messages and not user_input
 
 if show_welcome:
     # Centered hero
@@ -730,22 +784,18 @@ else:
         else:
             _render_assistant(msg["content"], msg.get("traces"))
 
-# Small stop button — sits right above the chat input, right-aligned.
-# Visible only once a conversation has started (nothing to stop on welcome).
-if st.session_state.messages:
-    _, stop_slot = st.columns([7, 1])
-    with stop_slot:
-        if st.button(
-            "⏹ Stop",
-            use_container_width=True,
-            key="chat_stop_btn",
-            help="Stop Stew mid-reply",
-        ):
-            st.session_state.stop_requested = True
-            st.rerun()
-
-# Always-present chat input (lives at the bottom)
-user_input = pending_prompt or st.chat_input("Ask Stew…")
+# Centered "New chat" pill rendered INSIDE Streamlit's fixed bottom container,
+# directly under the chat input. Use the container's methods directly instead
+# of a `with` block — `with st._bottom:` didn't propagate context to st.columns
+# and was double-rendering during streaming.
+_nc_cols = st._bottom.columns([3, 2, 3])
+_nc_cols[1].button(
+    "➕ New chat",
+    use_container_width=True,
+    key="new_chat_btn",
+    help="Start a fresh chat",
+    on_click=_reset_chat,
+)
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
