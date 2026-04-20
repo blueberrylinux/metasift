@@ -18,7 +18,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.clients import duck, openmetadata
+from app.clients import duck, llm, openmetadata
 from app.config import settings
 from app.engines import agent as agent_mod
 from app.engines import analysis, cleaning, report, stewardship, viz
@@ -281,6 +281,263 @@ _This guide is always reachable via the **📖 Guide** button in the sidebar._
             st.session_state.welcome_seen = True
             st.session_state.show_guide = False
             st.rerun()
+
+
+# ── API key override dialog ────────────────────────────────────────────────
+# Lets a user paste their own provider's API key without touching .env.
+# MetaSift's LLM client accepts any OpenAI-compatible endpoint, so users can
+# pick from OpenRouter / OpenAI / Gemini / Groq / Ollama / Custom. Overrides
+# are session-scoped (cleared on refresh) and never persisted to disk.
+
+
+_PROVIDER_PRESETS: dict[str, dict[str, str]] = {
+    "OpenRouter (default)": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "model_hint": "meta-llama/llama-3.3-70b-instruct:free",
+    },
+    "OpenAI": {
+        "base_url": "https://api.openai.com/v1",
+        "model_hint": "gpt-4o-mini",
+    },
+    "Gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model_hint": "gemini-2.0-flash",
+    },
+    "Groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "model_hint": "llama-3.3-70b-versatile",
+    },
+    "Ollama (local)": {
+        "base_url": "http://localhost:11434/v1",
+        "model_hint": "llama3:latest",
+    },
+    "Custom": {
+        "base_url": "",
+        "model_hint": "",
+    },
+}
+
+
+# Curated model shortlist per provider — what the chat-area model picker
+# shows in its dropdown. Free-tier / popular picks only; power users can
+# type a custom id via the "Other…" option. Keep each list ≤ 10 entries so
+# the dropdown doesn't turn into a scroll-scape.
+_MODEL_CATALOG: dict[str, list[str]] = {
+    "OpenRouter (default)": [
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "mistralai/mistral-nemo:free",
+        "google/gemini-2.0-flash-exp:free",
+        "deepseek/deepseek-chat-v3:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "meta-llama/llama-3.1-8b-instruct:free",
+        "anthropic/claude-3.5-sonnet",
+        "openai/gpt-4o-mini",
+    ],
+    "OpenAI": [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "o3-mini",
+    ],
+    "Gemini": [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+    ],
+    "Groq": [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+    ],
+    "Ollama (local)": [
+        "llama3",
+        "llama3.2",
+        "qwen2.5",
+        "mistral",
+        "phi3",
+    ],
+    "Custom": [],
+}
+
+_CUSTOM_MODEL_SENTINEL = "Other — type a custom model id"
+
+
+def _current_model_for_picker(override) -> str | None:
+    """What the model picker should show as 'selected' given the override
+    and the provider preset. Falls back to the preset's model hint when no
+    override-model is set so the dropdown never shows an empty state."""
+    if override and override.model:
+        return override.model
+    provider = _preset_for_url(override.base_url if override else None)
+    return _PROVIDER_PRESETS.get(provider, {}).get("model_hint") or None
+
+
+def _model_picker_bar() -> None:
+    """Compact bar above the chat area — provider + model dropdown + status.
+
+    Lets the user swap models without re-pasting the API key. Updates the
+    session's LLM override via llm.set_model() on change; preserves whatever
+    api_key / base_url the override already carries. When the catalog
+    doesn't include the current model (e.g. a custom id from the API key
+    modal), the 'Other…' sentinel shows that and a text input lets the user
+    edit it in place.
+    """
+    override = llm.get_override()
+    provider = _preset_for_url(override.base_url if override else None)
+    catalog = _MODEL_CATALOG.get(provider, []) or []
+    options = [*catalog, _CUSTOM_MODEL_SENTINEL]
+
+    current = _current_model_for_picker(override)
+    is_custom = bool(current) and current not in catalog
+    default_idx = (
+        options.index(current) if current in options else (len(options) - 1 if is_custom else 0)
+    )
+
+    icon_col, model_col, provider_col = st.columns([1, 6, 3])
+    with icon_col:
+        st.markdown(
+            "<div style='font-size: 1.4rem; line-height: 2.1rem; text-align: center;'>🧠</div>",
+            unsafe_allow_html=True,
+        )
+    with model_col:
+        picked = st.selectbox(
+            "Model",
+            options=options,
+            index=default_idx,
+            label_visibility="collapsed",
+            key="chat_model_picker",
+            help="Switches the model Stew uses for this session. All six task types share it.",
+        )
+    with provider_col:
+        st.markdown(
+            f"<div style='text-align: right; opacity: 0.65; line-height: 2.1rem;'>"
+            f"<small>{provider}</small></div>",
+            unsafe_allow_html=True,
+        )
+
+    # If 'Other…' is selected, surface a text input inline and use its value
+    # as the effective pick. Empty custom → keep current.
+    if picked == _CUSTOM_MODEL_SENTINEL:
+        custom = st.text_input(
+            "Custom model id",
+            value=(current if is_custom else ""),
+            placeholder=(
+                _PROVIDER_PRESETS.get(provider, {}).get("model_hint")
+                or "provider-specific model id"
+            ),
+            key="chat_model_picker_custom",
+            label_visibility="collapsed",
+        )
+        effective = (custom or "").strip() or None
+    else:
+        effective = picked
+
+    # Apply only if the model actually changed — avoids re-running the same
+    # override on every rerun, which would invalidate the lru_cache each time.
+    if effective != current:
+        llm.set_model(effective)
+        st.rerun()
+
+
+def _preset_for_url(base_url: str | None) -> str:
+    """Match a base URL to a preset name for the sidebar status indicator.
+    Falls back to 'Custom' for unknown endpoints."""
+    if not base_url:
+        return "OpenRouter (default)"
+    normalized = base_url.rstrip("/").lower()
+    for name, preset in _PROVIDER_PRESETS.items():
+        preset_url = preset["base_url"].rstrip("/").lower()
+        if preset_url and normalized == preset_url:
+            return name
+    return "Custom"
+
+
+@st.dialog("Use your own API key", width="medium")
+def _api_key_dialog() -> None:
+    st.markdown(
+        "MetaSift's LLM client works with any **OpenAI-compatible endpoint** — "
+        "paste your provider's API key, pick a preset (or go custom), and MetaSift "
+        "uses your key instead of the one in `.env`.\n\n"
+        "Overrides are **session-scoped** — they clear when you refresh the tab. "
+        "Keys are never written to disk."
+    )
+
+    current = llm.get_override()
+    default_preset = _preset_for_url(current.base_url) if current else "OpenRouter (default)"
+    preset_names = list(_PROVIDER_PRESETS.keys())
+    preset_idx = preset_names.index(default_preset) if default_preset in preset_names else 0
+
+    preset = st.selectbox(
+        "Provider",
+        options=preset_names,
+        index=preset_idx,
+        help="Picks a base URL and a model hint. 'Custom' leaves both blank for you to fill in.",
+    )
+    preset_config = _PROVIDER_PRESETS[preset]
+
+    api_key = st.text_input(
+        "API key",
+        type="password",
+        value=(current.api_key if current else ""),
+        placeholder="sk-...",
+        help="Your provider's API key. Never leaves this browser session.",
+    )
+    base_url = st.text_input(
+        "Base URL",
+        value=(current.base_url if current and current.base_url else preset_config["base_url"]),
+        placeholder=preset_config["base_url"] or "https://...",
+        help="The OpenAI-compatible endpoint. Auto-filled from the preset.",
+    )
+    model = st.text_input(
+        "Model (optional)",
+        value=(current.model if current and current.model else ""),
+        placeholder=preset_config["model_hint"] or "provider-specific model id",
+        help=(
+            "Overrides the per-task model IDs from `.env`. Leave blank to keep the "
+            "defaults (useful if your provider accepts OpenRouter model strings)."
+        ),
+    )
+
+    st.divider()
+
+    status_col, clear_col, apply_col = st.columns([3, 1, 1])
+    with status_col:
+        if current:
+            preset_label = _preset_for_url(current.base_url)
+            model_label = current.model or "per-task defaults"
+            st.caption(f"Active override: **{preset_label}** · `{model_label}`")
+        else:
+            st.caption("Currently running on `.env` defaults.")
+    with clear_col:
+        if st.button(
+            "Clear",
+            width="stretch",
+            disabled=current is None,
+            help="Drop the override and go back to `.env` defaults.",
+        ):
+            llm.clear_override()
+            st.session_state.show_api_key = False
+            st.rerun()
+    with apply_col:
+        if st.button(
+            "Use key",
+            type="primary",
+            width="stretch",
+            disabled=not (api_key and api_key.strip()),
+        ):
+            try:
+                llm.set_override(
+                    api_key=api_key,
+                    base_url=base_url or None,
+                    model=model or None,
+                )
+                st.session_state.show_api_key = False
+                st.rerun()
+            except ValueError as e:
+                st.error(f"{e}")
 
 
 def _reset_chat() -> None:
@@ -849,29 +1106,55 @@ with st.sidebar:
         except Exception as e:
             st.caption(f"_Report unavailable: {e}_")
 
-    if st.button(
-        "📖 Guide",
-        width="stretch",
-        help="Show the MetaSift intro and quick-start",
-    ):
-        st.session_state.show_guide = True
-        st.rerun()
+    gbtn, kbtn = st.columns(2)
+    with gbtn:
+        if st.button(
+            "📖 Guide",
+            width="stretch",
+            help="Show the MetaSift intro and quick-start",
+        ):
+            st.session_state.show_guide = True
+            st.rerun()
+    with kbtn:
+        override_active = llm.get_override() is not None
+        if st.button(
+            "🔑 API key" + (" ✓" if override_active else ""),
+            width="stretch",
+            type="secondary",
+            help=(
+                "Use your own OpenAI-compatible key (OpenRouter, OpenAI, Gemini, "
+                "Groq, Ollama, or custom). Session-scoped; never persisted."
+            ),
+        ):
+            st.session_state.show_api_key = True
+            st.rerun()
 
-    # Subtle status row at the bottom of the sidebar
+    # Subtle status row at the bottom of the sidebar. The LLM indicator now
+    # surfaces the active provider + model when an override is set — users
+    # always see which key is live.
     st.divider()
     s1, s2 = st.columns(2)
     s1.caption(f"OpenMetadata {'🟢' if om_ok else '🔴'}")
-    s2.caption(f"LLM {'🟢' if settings.openrouter_api_key else '🔴'}")
+    override = llm.get_override()
+    if override:
+        provider = _preset_for_url(override.base_url)
+        model_short = (override.model or "default").split("/")[-1]
+        s2.caption(f"LLM 🟢 ({provider} · {model_short})")
+    else:
+        s2.caption(f"LLM {'🟢' if settings.openrouter_api_key else '🔴'}")
 
 
 # ── Main area ──────────────────────────────────────────────────────────────
 # Welcome / Guide dialog fires on first session load and on-demand whenever
 # the Guide sidebar button sets show_guide=True. Placed before the review /
 # viz short-circuits so the dialog is reachable from any screen.
-if not st.session_state.get("welcome_seen", False) or st.session_state.get(
-    "show_guide", False
-):
+if not st.session_state.get("welcome_seen", False) or st.session_state.get("show_guide", False):
     _welcome_dialog()
+
+# API-key override dialog — fires only on demand via the 🔑 API key sidebar
+# button (show_api_key=True). Independent of the welcome flow.
+if st.session_state.get("show_api_key", False):
+    _api_key_dialog()
 
 # When the review-queue toggle is on, the main area shows the approvals panel
 # instead of the welcome / chat view. Chat state is preserved — toggling back
@@ -883,6 +1166,10 @@ if st.session_state.get("show_review"):
 if st.session_state.get("show_viz"):
     _render_viz_panel()
     st.stop()
+
+# Model picker bar — pinned above the chat area. Always visible on the chat
+# screen so the user sees + swaps the active model without leaving.
+_model_picker_bar()
 
 # Pending prompts come from suggestion-chip clicks; they short-circuit the
 # normal chat_input flow on the next rerun. Call st.chat_input up front so
