@@ -37,7 +37,7 @@ MetaSift directly addresses six issues from the WeMakeDevs × OpenMetadata "Back
 | [#26660](https://github.com/open-metadata/OpenMetadata/issues/26660) | AI-Powered Data Quality Recommendations | `recommend_dq_tests(fqn)` grounds the LLM in columns + tags + existing tests and proposes severity-ranked DQ tests that should exist but don't |
 | [#26658](https://github.com/open-metadata/OpenMetadata/issues/26658) | Data Quality Checks Impact | `dq_impact(fqn)` joins failing tests × lineage × PII into a risk score; `dq_risk_catalog` ranks where to fix first |
 | [#26661](https://github.com/open-metadata/OpenMetadata/issues/26661) | Propose Automated Fixes for Failed DQ Checks | Every DQ explanation includes a `fix_type` classifier (schema_change / etl_investigation / data_correction / upstream_fix) + prose next-step — rendered with colored chips |
-| [#25146](https://github.com/open-metadata/OpenMetadata/issues/25146) | Lineage Governance Layer | **🛡️ Governance** viz tab — lineage DAG recolored by PII status (origin / tainted / clean), propagation edges highlighted red |
+| [#25146](https://github.com/open-metadata/OpenMetadata/issues/25146) | Lineage Governance Layer | **Governance** viz tab — lineage DAG recolored by PII status (origin / tainted / clean), propagation edges highlighted red |
 
 ## Demo
 
@@ -56,14 +56,14 @@ MetaSift directly addresses six issues from the WeMakeDevs × OpenMetadata "Back
 
 ### Data quality track
 
-- **🧪 DQ failure explanations** (#26659) — Ingest OM test cases, LLM writes Summary + Likely cause + **Suggested fix** per failure, cached in `dq_explanations`. Synthetic fixture fallback so the feature demos without a configured OM DQ test suite.
-- **🔷 Fix classification** (#26661) — Every explanation includes a `fix_type` chip: Schema change / ETL investigation / Data correction / Upstream fix / Other. Lets future UIs expose contextual actions (Copy SQL, Open pipeline, Ping producer) per failure type.
-- **💡 DQ test recommendations** (#26660) — `recommend_dq_tests(fqn)` proposes tests that should exist but don't. Constrained to a 12-definition OM-test allowlist, filters duplicates against `om_test_cases`, severity-ranked (critical / recommended / nice-to-have).
-- **🎯 DQ × Lineage risk** (#26658) — `dq_impact(fqn)` multiplies failing-tests by downstream blast radius (PII-amplified). Catalog-wide `dq_risk_catalog` answers *"where should I fix DQ first?"*.
+- **DQ failure explanations** (#26659) — Ingest OM test cases, LLM writes Summary + Likely cause + **Suggested fix** per failure, cached in `dq_explanations`. Synthetic fixture fallback so the feature demos without a configured OM DQ test suite.
+- **Fix classification** (#26661) — Every explanation includes a `fix_type` chip: Schema change / ETL investigation / Data correction / Upstream fix / Other. Lets future UIs expose contextual actions (Copy SQL, Open pipeline, Ping producer) per failure type.
+- **DQ test recommendations** (#26660) — `recommend_dq_tests(fqn)` proposes tests that should exist but don't. Constrained to a 12-definition OM-test allowlist, filters duplicates against `om_test_cases`, severity-ranked (critical / recommended / nice-to-have).
+- **DQ × Lineage risk** (#26658) — `dq_impact(fqn)` multiplies failing-tests by downstream blast radius (PII-amplified). Catalog-wide `dq_risk_catalog` answers *"where should I fix DQ first?"*.
 
 ### Governance
 
-- **🛡️ Lineage governance overlay** (#25146) — PII propagation view: origin tables (🔴 has PII columns directly), tainted tables (🟠 reachable via lineage), clean tables (⚪). Propagation edges highlighted in red so the PII chain pops against the rest of the lineage graph. Single recursive CTE seeded at every origin.
+- **Lineage governance overlay** (#25146) — PII propagation view: origin tables (🔴 has PII columns directly), tainted tables (🟠 reachable via lineage), clean tables (⚪). Propagation edges highlighted in red so the PII chain pops against the rest of the lineage graph. Single recursive CTE seeded at every origin.
 
 ### Stewardship & automation
 
@@ -87,11 +87,11 @@ MetaSift directly addresses six issues from the WeMakeDevs × OpenMetadata "Back
 
 ### Bring-your-own LLM
 
-- **🔑 LLM setup modal** — Paste any OpenAI-compatible key (OpenRouter, OpenAI, Gemini, Groq, Ollama, Custom). Six provider presets auto-fill base URL + model hint. Session-scoped; never persisted.
-- **💫 MetaSift defaults** — One-click button: paste an OpenRouter key, get the same hybrid routing the project ships with (Llama 3.3 70B for five tasks + GPT-4o-mini for tool-calling).
+- **LLM setup modal** — Paste any OpenAI-compatible key (OpenRouter, OpenAI, Gemini, Groq, Ollama, Custom). Six provider presets auto-fill base URL + model hint. Session-scoped; never persisted.
+- **MetaSift defaults** — One-click button: paste an OpenRouter key, get the same hybrid routing the project ships with (Llama 3.3 70B for five tasks + GPT-4o-mini for tool-calling).
 - **Live model picker** — A dropdown anchored below the chat input with the full OpenRouter catalog (fetched dynamically, ~343 models, type-to-filter). Switch models mid-conversation.
 - **Per-task routing** — Advanced expander inside LLM setup: send `toolcall`, `reasoning`, `description`, `stale`, `scoring`, `classification` to different models. Cheap-open-weight for bulk work + reliable-commercial for tool-calling is the default config.
-- **First-launch welcome** — Guide modal explains MetaSift + four engines + quick start. Reachable any time via the sidebar **📖 Guide** button.
+- **First-launch welcome** — Guide modal explains MetaSift + four engines + quick start. Reachable any time via the sidebar **Guide** button.
 
 ## What makes MetaSift different
 
@@ -291,9 +291,9 @@ make run
 
 Once the app opens:
 
-1. The **📖 Welcome** dialog explains the four engines + a 3-step quick-start.
-2. If your `.env` doesn't have an `OPENROUTER_API_KEY` (or you want a different provider), click **🔑 LLM setup** in the sidebar → paste your key → hit **💫 Use MetaSift defaults** for one-click Llama 3.3 + GPT-4o-mini routing. Or pick any of the 6 provider presets / configure per-task routing / dump the 343-model OpenRouter catalog into the chat-area picker.
-3. Click **🔄 Refresh metadata** to load the seeded catalog.
+1. The **Welcome** dialog explains the four engines + a 3-step quick-start.
+2. If your `.env` doesn't have an `OPENROUTER_API_KEY` (or you want a different provider), click **LLM setup** in the sidebar → paste your key → hit **Use MetaSift defaults** for one-click Llama 3.3 + GPT-4o-mini routing. Or pick any of the 6 provider presets / configure per-task routing / dump the 343-model OpenRouter catalog into the chat-area picker.
+3. Click **Refresh metadata** to load the seeded catalog.
 4. Ask Stew: *"what's my composite score?"* or *"why is my email_not_null check failing?"*
 
 ## Project layout
@@ -362,7 +362,7 @@ MetaSift only sends structural metadata to external LLMs — column names, data 
 
 **`openmetadata-ingestion` install fails on Windows.** You're not on WSL. This project is designed for WSL 2 / Linux — the Windows install path has pydantic version issues.
 
-**OpenRouter rate limits.** Free-tier models have per-minute request limits that vary by model (and some, like the `:free` Llama 3.3 variant served via Venice, 429 under any real load). Either click **💫 Use MetaSift defaults** in the LLM setup modal — it routes the shared model to paid Llama 3.3 (~$0.12/1M tokens) with GPT-4o-mini for tool-calling — or pick any other provider preset and paste the corresponding key. You can also swap models live via the dropdown above the chat input.
+**OpenRouter rate limits.** Free-tier models have per-minute request limits that vary by model (and some, like the `:free` Llama 3.3 variant served via Venice, 429 under any real load). Either click **Use MetaSift defaults** in the LLM setup modal — it routes the shared model to paid Llama 3.3 (~$0.12/1M tokens) with GPT-4o-mini for tool-calling — or pick any other provider preset and paste the corresponding key. You can also swap models live via the dropdown above the chat input.
 
 **Port 8585 already in use.** Another OpenMetadata instance is running. `docker ps` to check, then `docker stop <id>`.
 
