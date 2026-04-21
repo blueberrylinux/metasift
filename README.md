@@ -152,9 +152,9 @@ graph TB
     end
 
     subgraph Engines
-        AE[Analysis · composite, impact, DQ risk, PII propagation]
-        SE[Stewardship · auto-doc, PII tags, DQ recommendations]
-        CE[Cleaning · stale, quality, DQ explanations, fix_type]
+        AE[Analysis · composite · impact · DQ risk · PII propagation]
+        SE[Stewardship · auto-doc · DQ recommendations · apply writes]
+        CE[Cleaning · stale · quality · PII scan · DQ explanations · fix_type]
     end
 
     subgraph OpenMetadata
@@ -170,8 +170,10 @@ graph TB
     end
 
     subgraph Analytics
-        DDB[(DuckDB In-Memory\nom_tables · om_columns · om_lineage · om_test_cases\ncleaning_results · dq_explanations · dq_recommendations)]
+        DDB[(DuckDB In-Memory\nom_tables · om_columns · om_lineage · om_test_cases\npii_results · cleaning_results · doc_suggestions\ndq_explanations · dq_recommendations)]
     end
+
+    Fixture[[scripts/dq_fixtures.json]]
 
     UI --> Stew
     UI --> LLMSetup
@@ -185,18 +187,20 @@ graph TB
     Agent --> CE
     Agent -->|read-only discovery| MCP
     AE --> DDB
-    CE --> DDB
-    SE --> REST
+    CE -->|scan results| DDB
+    SE -->|suggestions| DDB
     DDB -->|hydrated via| REST
-    DDB -->|DQ test cases via| DQ
+    DDB -->|DQ tests via| DQ
+    Fixture -.->|fallback when DQ endpoint is empty| DDB
     DQ --> DB
     MCP --> ES
     MCP --> DB
     REST --> DB
     Viz --> DDB
     Rep --> DDB
-    RQ --> DDB
-    RQ -->|approved writes| REST
+    RQ -->|reads pending| DDB
+    RQ -->|approved| SE
+    SE -->|PATCH via REST| REST
 ```
 
 ## OpenMetadata integration depth
