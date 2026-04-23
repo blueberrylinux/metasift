@@ -14,7 +14,7 @@ from app.api.schemas import HealthResponse
 
 router = APIRouter(tags=["ops"])
 
-_VERSION = "0.5.0-port.0"  # bumps per phase: 0.5.0-port.1 after Phase 1, etc.
+_VERSION = "0.5.0-port.1"  # bumps per phase: 0.5.0-port.2 after Phase 2, etc.
 
 
 @router.get("/health", response_model=HealthResponse)

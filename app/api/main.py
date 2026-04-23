@@ -1,7 +1,7 @@
 """FastAPI app factory.
 
-Phase 0 scope: boot the app, mount the health router, ensure SQLite migrations
-run on startup. No engine wiring yet — that lands in Phase 1 onwards.
+Phase 0 shipped the skeleton (app + /health + SQLite migrations).
+Phase 1 adds the analysis router (composite score + coverage + refresh).
 
 Ports and lifespan are deliberately minimal. Nothing in this file imports or
 rewrites app.main (Streamlit) or app.config — the two run side-by-side.
@@ -19,7 +19,7 @@ from loguru import logger
 
 from app.api import store
 from app.api.config import api_settings
-from app.api.routers import health
+from app.api.routers import analysis, health
 
 PREFIX = "/api/v1"
 
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="MetaSift API",
-    version="0.5.0-port.0",
+    version="0.5.0-port.1",
     lifespan=lifespan,
     docs_url=f"{PREFIX}/docs",
     redoc_url=f"{PREFIX}/redoc",
@@ -58,6 +58,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix=PREFIX)
+app.include_router(analysis.router, prefix=PREFIX)
 
 # Mount the built React bundle in prod (SERVE_STATIC=1 ./web/dist exists).
 # Dev: Vite serves :5173 and proxies /api through to :8000 (see web/vite.config.ts).
