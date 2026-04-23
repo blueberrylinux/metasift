@@ -33,3 +33,9 @@ web/vite.config.d.ts
 *.sqlite-journal
 *.sqlite-shm
 *.sqlite-wal
+
+# Port scaffold / planning docs — kept locally for reference, not tracked.
+# The canonical versions live in ../metasift+/.
+/Port Risk Mitigation.md
+/MetaSift App.html
+/MetaSift Port Scaffolding.html
