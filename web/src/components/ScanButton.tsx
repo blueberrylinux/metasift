@@ -87,10 +87,12 @@ export function ScanButton({
       setState({ ...INITIAL, error: msg });
     } finally {
       // Refresh review queue since a completed scan usually populates fresh
-      // suggestions / failure explanations, and every viz figure since most
-      // tabs read from the tables the scans write.
+      // suggestions / failure explanations, every viz figure since most
+      // tabs read from the tables the scans write, and the DQ cards on
+      // /dq so explain / recommend / impact refresh in place.
       qc.invalidateQueries({ queryKey: ['review'] });
       qc.invalidateQueries({ queryKey: ['viz'] });
+      qc.invalidateQueries({ queryKey: ['dq'] });
       // Reserved touchpoint: once a ScanStatusBadge subscribes to
       // ['scan-status'] via getScanStatus(), this will drive the "last scan
       // N min ago" hint. Harmless no-op until then.

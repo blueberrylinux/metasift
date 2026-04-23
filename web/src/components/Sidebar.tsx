@@ -21,7 +21,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'stew', label: 'Stew (chat)', to: '/chat' },
   { key: 'review', label: 'Review queue', to: '/review' },
   { key: 'viz', label: 'Visualizations', to: '/viz' },
-  { key: 'dq', label: 'Data quality' },
+  { key: 'dq', label: 'Data quality', to: '/dq' },
   { key: 'report', label: 'Report' },
 ];
 

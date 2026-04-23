@@ -267,3 +267,109 @@ class VizFigureResponse(BaseModel):
     empty-state hint pointing at the sidebar scan that would populate it."""
 
     figure: dict[str, Any] | None
+
+
+# ── /dq ───────────────────────────────────────────────────────────────────
+
+
+FixType = Literal[
+    "schema_change", "etl_investigation", "data_correction", "upstream_fix", "other"
+]
+Severity = Literal["critical", "recommended", "nice-to-have"]
+
+
+class DQSummaryResponse(BaseModel):
+    """Headline counts from om_test_cases. `failing_tables` is distinct
+    table_fqn under status='Failed'."""
+
+    total: int
+    failed: int
+    passed: int
+    failing_tables: int
+
+
+class DQExplanation(BaseModel):
+    """LLM-written plain-English breakdown of a failing test. `fix_type` is
+    the classifier bucket the UI maps to a chip — value must be one of the
+    five allowlist entries (`other` is the fallback)."""
+
+    summary: str
+    likely_cause: str
+    next_step: str
+    fix_type: FixType
+
+
+class DQFailure(BaseModel):
+    """One failing DQ test. `explanation` is null when the explain-scan
+    hasn't produced a row for this test yet."""
+
+    test_id: str
+    test_name: str
+    table_fqn: str
+    column_name: str | None = None
+    test_definition_name: str | None = None
+    result_message: str | None = None
+    explanation: DQExplanation | None = None
+
+
+class DQFailuresResponse(BaseModel):
+    """Failing tests + the summary strip the UI renders above the list.
+    `explanations_loaded` tells the UI whether to nudge the user to click
+    the 🧪 Explain DQ scan in the sidebar."""
+
+    summary: DQSummaryResponse
+    rows: list[DQFailure]
+    explanations_loaded: bool
+
+
+class DQRecommendation(BaseModel):
+    """One suggested DQ test. `parameters` is the list of
+    {name, value}-shaped dicts OpenMetadata expects; passed through as-is
+    so the UI can render them in a copy-to-clipboard card."""
+
+    table_fqn: str
+    column_name: str | None = None
+    test_definition: str
+    parameters: list[dict[str, Any]]
+    rationale: str
+    severity: Severity
+
+
+class DQRecommendationsResponse(BaseModel):
+    """Recommendations list + a flag telling the UI whether the
+    dq_recommend scan has run. Empty `rows` is ambiguous without it
+    (could mean "no gaps" OR "scan not run")."""
+
+    rows: list[DQRecommendation]
+    scan_run: bool
+
+
+class DQRiskRow(BaseModel):
+    """One row in the catalog-wide DQ risk ranking. `risk_score` is
+    failed_tests × (direct + 0.5·transitive + 2·pii_downstream) —
+    zero when either side is zero."""
+
+    fqn: str
+    failed_tests: int
+    direct: int
+    transitive: int
+    pii_downstream: int
+    risk_score: float
+
+
+class DQRiskResponse(BaseModel):
+    rows: list[DQRiskRow]
+
+
+class DQImpactResponse(BaseModel):
+    """Per-table drilldown. Shape matches `analysis.dq_impact()` directly —
+    safe to expose as-is since it's already meant for UI consumption."""
+
+    fqn: str
+    failed_tests: int
+    failing_test_names: list[str]
+    direct: int
+    transitive: int
+    pii_downstream: int
+    downstream_fqns: list[str]
+    risk_score: float

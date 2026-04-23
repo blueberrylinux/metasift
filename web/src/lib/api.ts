@@ -444,6 +444,114 @@ export function getVizFigure(slug: string): Promise<VizFigureResponse> {
   return getJSON<VizFigureResponse>(`/viz/${encodeURIComponent(slug)}`);
 }
 
+// ── /dq ────────────────────────────────────────────────────────────────────
+//
+// All DQ views read from the DuckDB caches populated by the slice-2 scan
+// endpoints. Empty responses carry hints (`scan_run: false`,
+// `explanations_loaded: false`) so the UI can render specific CTAs instead
+// of a blanket "no data" message.
+
+export type FixType =
+  | 'schema_change'
+  | 'etl_investigation'
+  | 'data_correction'
+  | 'upstream_fix'
+  | 'other';
+export type Severity = 'critical' | 'recommended' | 'nice-to-have';
+
+export interface DQSummaryResponse {
+  total: number;
+  failed: number;
+  passed: number;
+  failing_tables: number;
+}
+
+export interface DQExplanation {
+  summary: string;
+  likely_cause: string;
+  next_step: string;
+  fix_type: FixType;
+}
+
+export interface DQFailure {
+  test_id: string;
+  test_name: string;
+  table_fqn: string;
+  column_name: string | null;
+  test_definition_name: string | null;
+  result_message: string | null;
+  explanation: DQExplanation | null;
+}
+
+export interface DQFailuresResponse {
+  summary: DQSummaryResponse;
+  rows: DQFailure[];
+  explanations_loaded: boolean;
+}
+
+export interface DQRecommendation {
+  table_fqn: string;
+  column_name: string | null;
+  test_definition: string;
+  parameters: Array<Record<string, unknown>>;
+  rationale: string;
+  severity: Severity;
+}
+
+export interface DQRecommendationsResponse {
+  rows: DQRecommendation[];
+  scan_run: boolean;
+}
+
+export interface DQRiskRow {
+  fqn: string;
+  failed_tests: number;
+  direct: number;
+  transitive: number;
+  pii_downstream: number;
+  risk_score: number;
+}
+
+export interface DQRiskResponse {
+  rows: DQRiskRow[];
+}
+
+export interface DQImpactResponse {
+  fqn: string;
+  failed_tests: number;
+  failing_test_names: string[];
+  direct: number;
+  transitive: number;
+  pii_downstream: number;
+  downstream_fqns: string[];
+  risk_score: number;
+}
+
+export function getDQSummary(): Promise<DQSummaryResponse> {
+  return getJSON<DQSummaryResponse>('/dq/summary');
+}
+
+export function getDQFailures(): Promise<DQFailuresResponse> {
+  // Schema filtering is client-side. Earlier server-side filter caused
+  // chip counts to zero out once the user selected a schema, since the
+  // response only contained matching rows. Always returning the full list
+  // lets the UI compute accurate counts per chip.
+  return getJSON<DQFailuresResponse>('/dq/failures');
+}
+
+export function getDQRecommendations(severity?: Severity): Promise<DQRecommendationsResponse> {
+  const qs = severity ? `?severity=${encodeURIComponent(severity)}` : '';
+  return getJSON<DQRecommendationsResponse>(`/dq/recommendations${qs}`);
+}
+
+export function getDQRisk(limit = 20): Promise<DQRiskResponse> {
+  return getJSON<DQRiskResponse>(`/dq/risk?limit=${limit}`);
+}
+
+export function getDQImpact(fqn: string): Promise<DQImpactResponse> {
+  return getJSON<DQImpactResponse>(`/dq/impact/${encodeURIComponent(fqn)}`);
+}
+
 export async function streamScan(
   kind: ScanKind,
   onFrame: (frame: ScanFrame) => void,
