@@ -114,3 +114,155 @@ export function getCoverage(schema?: string): Promise<CoverageResponse> {
 export function postRefresh(): Promise<RefreshResponse> {
   return postJSON<RefreshResponse>('/analysis/refresh');
 }
+
+// ── /chat ──────────────────────────────────────────────────────────────────
+//
+// POST /chat/stream is Server-Sent Events over fetch (EventSource doesn't do
+// POST bodies). Five frame types — {token, tool_call, tool_result, final,
+// error} — arrive `\n\n`-separated; we demux in streamChat().
+//
+// Conversations: POST / GET (list) / GET (detail). `conversation_id` on a
+// stream request makes the backend load prior turns and persist the new
+// one atomically.
+
+export type ChatRole = 'user' | 'assistant';
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
+
+export interface ToolTraceEntry {
+  tool: string;
+  args: unknown;
+  result: unknown;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationListResponse {
+  rows: ConversationSummary[];
+}
+
+export interface PersistedMessage {
+  id: number;
+  role: ChatRole;
+  content: string;
+  tool_trace: ToolTraceEntry[] | null;
+  created_at: string;
+}
+
+export interface ConversationDetail {
+  conversation: ConversationSummary;
+  messages: PersistedMessage[];
+}
+
+export function createConversation(title?: string): Promise<ConversationSummary> {
+  return postJSON<ConversationSummary>('/chat/conversations', { title: title ?? null });
+}
+
+export function listConversations(limit = 50): Promise<ConversationListResponse> {
+  return getJSON<ConversationListResponse>(`/chat/conversations?limit=${limit}`);
+}
+
+export function getConversation(id: string): Promise<ConversationDetail> {
+  return getJSON<ConversationDetail>(`/chat/conversations/${encodeURIComponent(id)}`);
+}
+
+// ── SSE frames ─────────────────────────────────────────────────────────────
+
+export type ChatFrame =
+  | { type: 'token'; text: string }
+  | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
+  | { type: 'tool_result'; id: string; content: string }
+  | { type: 'final'; text: string }
+  | { type: 'error'; message: string };
+
+export interface ChatStreamRequest {
+  question: string;
+  conversation_id?: string;
+  history?: ChatMessage[];
+}
+
+// SSE event blocks can be terminated by \r\n\r\n (sse-starlette's default),
+// \n\n, or \r\r per the WHATWG SSE spec. Match any of the three.
+const SSE_BLOCK_SPLIT = /\r\n\r\n|\n\n|\r\r/;
+
+function parseSSEBlock(block: string): ChatFrame | null {
+  // Inside a block, lines can end with \r\n or \n or \r. Split on any of them,
+  // then pick out `data:` lines (ignoring the `event:` hint — our payload's
+  // JSON carries `type` already).
+  const dataLines: string[] = [];
+  for (const line of block.split(/\r\n|\n|\r/)) {
+    if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5));
+  }
+  if (!dataLines.length) return null;
+  try {
+    return JSON.parse(dataLines.join('\n')) as ChatFrame;
+  } catch {
+    return null;
+  }
+}
+
+function splitNextBlock(buf: string): { block: string; rest: string } | null {
+  const m = SSE_BLOCK_SPLIT.exec(buf);
+  if (!m) return null;
+  return { block: buf.slice(0, m.index), rest: buf.slice(m.index + m[0].length) };
+}
+
+export async function streamChat(
+  req: ChatStreamRequest,
+  onFrame: (frame: ChatFrame) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const r = await fetch(`${API}/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!r.ok) {
+    // Non-2xx before streaming starts — e.g. 404 for missing conversation_id.
+    // Reuse parseOrThrow so the error shape matches the rest of the client.
+    await parseOrThrow<unknown>(r, '/chat/stream');
+    return;
+  }
+  if (!r.body) throw new ApiError('internal_error', '/chat/stream: empty body');
+
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      while (true) {
+        const next = splitNextBlock(buf);
+        if (!next) break;
+        buf = next.rest;
+        const frame = parseSSEBlock(next.block);
+        if (frame) onFrame(frame);
+      }
+    }
+    // Flush any trailing block if the server closed without a final separator.
+    if (buf.trim()) {
+      const frame = parseSSEBlock(buf);
+      if (frame) onFrame(frame);
+    }
+  } finally {
+    // Always release the reader lock so the underlying stream can be GC'd,
+    // even if the caller aborts or onFrame throws.
+    try {
+      reader.releaseLock();
+    } catch {
+      // reader may already be in a released state if cancel() fired
+    }
+  }
+}

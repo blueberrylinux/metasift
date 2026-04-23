@@ -19,16 +19,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { MetricCard } from '../components/MetricCard';
 import { ScoreRing } from '../components/ScoreRing';
+import { Sidebar } from '../components/Sidebar';
 import { ApiError, getComposite, postRefresh } from '../lib/api';
-
-const NAV_ITEMS = [
-  { key: 'dashboard', label: 'Dashboard', active: true },
-  { key: 'stew', label: 'Stew (chat)', active: false },
-  { key: 'review', label: 'Review queue', active: false },
-  { key: 'viz', label: 'Visualizations', active: false },
-  { key: 'dq', label: 'Data quality', active: false },
-  { key: 'report', label: 'Report', active: false },
-];
 
 export function Dashboard() {
   const qc = useQueryClient();
@@ -57,7 +49,7 @@ export function Dashboard() {
     <div className="min-h-screen bg-ink-bg text-ink-text bg-hero-glow relative">
       <div className="absolute inset-0 bg-grid-bg bg-grid-48 opacity-40 pointer-events-none" />
       <div className="relative flex">
-        <Sidebar />
+        <Sidebar activeKey="dashboard" />
         <main className="flex-1 px-10 pt-10 pb-20">
           <header className="flex items-center justify-between mb-10">
             <div>
@@ -87,41 +79,6 @@ export function Dashboard() {
         </main>
       </div>
     </div>
-  );
-}
-
-function Sidebar() {
-  return (
-    <aside className="w-56 min-h-screen border-r border-ink-border bg-ink-panel/40 px-5 pt-10 pb-6 flex flex-col gap-8">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-lg bg-accent-glow border border-accent/30 flex items-center justify-center">
-          <span className="font-bold text-accent-soft text-lg">M</span>
-        </div>
-        <div>
-          <div className="font-bold tracking-tight">MetaSift</div>
-          <div className="text-ink-dim text-mini font-mono">v0.5.0-port.1</div>
-        </div>
-      </div>
-      <nav className="flex flex-col gap-1">
-        {NAV_ITEMS.map((item) => (
-          <button
-            key={item.key}
-            disabled={!item.active}
-            className={
-              'text-left text-sm px-3 py-2 rounded-md transition-colors ' +
-              (item.active
-                ? 'bg-accent-glow text-accent-soft border border-accent/20'
-                : 'text-ink-dim hover:text-ink-soft cursor-not-allowed')
-            }
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
-      <div className="mt-auto text-ink-dim text-mini font-mono">
-        Phase 1 · composite score vertical slice
-      </div>
-    </aside>
   );
 }
 
