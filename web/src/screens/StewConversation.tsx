@@ -10,17 +10,21 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 
 import { AppLayout } from '../components/AppLayout';
 import { Composer } from '../components/Composer';
 import { MessageList, type InFlightState } from '../components/MessageList';
-import { ModelQuickPicker } from '../components/ModelQuickPicker';
 import { PageHeader } from '../components/PageHeader';
 import { ApiError, getConversation, streamChat } from '../lib/api';
 
+interface LocationState {
+  initial_question?: string;
+}
+
 export function StewConversation() {
   const { conversationId = '' } = useParams();
+  const location = useLocation();
   const qc = useQueryClient();
   const detail = useQuery({
     queryKey: ['conversation', conversationId],
@@ -30,6 +34,7 @@ export function StewConversation() {
 
   const [inFlight, setInFlight] = useState<InFlightState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const autoSentRef = useRef(false);
 
   // Keep the view glued to the bottom as new content streams or renders.
   useEffect(() => {
@@ -94,6 +99,22 @@ export function StewConversation() {
 
   const onSend = useCallback((text: string) => send.mutate(text), [send]);
 
+  // One-shot auto-submit when arriving with an initial question handed over
+  // from StewHome or the WelcomeModal's suggestion chips. The `autoSentRef`
+  // is the authoritative guard — StrictMode's dev double-invoke, a refresh
+  // that preserves history state, or back-nav would otherwise re-submit.
+  // The `replaceState` call at the bottom is cosmetic (React Router reads
+  // its own history cache, not the native one) but doesn't hurt.
+  useEffect(() => {
+    const initial = (location.state as LocationState | null)?.initial_question;
+    if (!initial || autoSentRef.current) return;
+    if (!detail.data || detail.data.messages.length > 0) return;
+    autoSentRef.current = true;
+    send.mutate(initial);
+    window.history.replaceState({}, '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.data, location.state]);
+
   const title = detail.data?.conversation.title || 'Untitled conversation';
   const messageCount = detail.data ? `${detail.data.messages.length} messages` : '';
 
@@ -133,15 +154,17 @@ export function StewConversation() {
           )}
         </div>
 
-        <footer className="border-t border-slate-800/80 px-6 py-4 bg-slate-900/30">
-          <Composer onSend={onSend} disabled={send.isPending} />
-          <ModelQuickPicker />
-          {send.error instanceof ApiError ? (
-            <div className="mt-2 text-[11px] font-mono text-red-300">
-              {send.error.code}: {send.error.message}
-            </div>
-          ) : null}
-        </footer>
+        <Composer
+          onSend={onSend}
+          disabled={send.isPending}
+          footerExtra={
+            send.error instanceof ApiError ? (
+              <span className="font-mono text-red-300 truncate">
+                {send.error.code}: {send.error.message}
+              </span>
+            ) : null
+          }
+        />
       </div>
     </AppLayout>
   );

@@ -41,12 +41,12 @@ export function ModelQuickPicker() {
 
   return (
     <Wrapper>
-      <span className="text-mini font-mono text-ink-dim">🧠</span>
+      <span className="font-mono text-slate-500 shrink-0">🧠</span>
       <select
         value={current}
         disabled={apply.isPending}
         onChange={(e) => apply.mutate(e.target.value)}
-        className="bg-ink-panel border border-ink-border rounded px-2 py-1 text-xs text-ink-text font-mono focus:outline-none focus:border-accent/60 disabled:opacity-60 max-w-xs"
+        className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-emerald-500/60 disabled:opacity-60 max-w-[160px]"
         title={source === 'fallback' ? 'Showing offline fallback list — OpenRouter fetch failed' : ''}
       >
         {options.map((m) => (
@@ -55,14 +55,16 @@ export function ModelQuickPicker() {
           </option>
         ))}
       </select>
-      {apply.isPending && <span className="text-mini font-mono text-ink-dim">saving…</span>}
+      {apply.isPending && <span className="font-mono text-slate-500 shrink-0">saving…</span>}
       {apply.error instanceof ApiError ? (
-        <span className="text-mini font-mono text-error-soft">{apply.error.message}</span>
+        <span className="font-mono text-red-300 shrink-0 truncate">{apply.error.message}</span>
       ) : null}
     </Wrapper>
   );
 }
 
 function Wrapper({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-center gap-2 mt-2">{children}</div>;
+  // Inline in the Composer footer — no top margin, tight gap so the picker
+  // sits flush with the other footer hints ("tools · writes gated").
+  return <div className="flex items-center gap-1.5 min-w-0">{children}</div>;
 }
