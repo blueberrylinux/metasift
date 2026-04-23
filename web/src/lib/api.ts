@@ -290,6 +290,65 @@ export function setLLMModel(model: string): Promise<ModelConfig> {
   return postJSON<ModelConfig>('/llm/model', { model });
 }
 
+// Full config surface (Phase 3.5 slice 2b).
+
+export interface TaskModelMap {
+  toolcall: string;
+  reasoning: string;
+  description: string;
+  stale: string;
+  scoring: string;
+  classification: string;
+}
+
+export interface LLMConfigResponse {
+  api_key_set: boolean;
+  api_key_preview: string;
+  base_url: string;
+  model: string;
+  per_task_models: TaskModelMap;
+  env_defaults: TaskModelMap;
+}
+
+export interface SetLLMConfigRequest {
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  per_task_models?: Partial<TaskModelMap>;
+}
+
+export interface LLMTestRequest {
+  model?: string;
+  api_key?: string;
+  base_url?: string;
+}
+
+export interface LLMTestResponse {
+  ok: boolean;
+  model: string;
+  base_url: string;
+  latency_ms: number;
+  response: string;
+  error: string | null;
+}
+
+export function getLLMConfig(): Promise<LLMConfigResponse> {
+  return getJSON<LLMConfigResponse>('/llm/config');
+}
+
+export function setLLMConfig(req: SetLLMConfigRequest): Promise<LLMConfigResponse> {
+  return postJSON<LLMConfigResponse>('/llm/config', req);
+}
+
+export async function resetLLMConfig(): Promise<LLMConfigResponse> {
+  const r = await fetch(`${API}/llm/config`, { method: 'DELETE' });
+  return parseOrThrow<LLMConfigResponse>(r, '/llm/config');
+}
+
+export function testLLM(req: LLMTestRequest = {}): Promise<LLMTestResponse> {
+  return postJSON<LLMTestResponse>('/llm/test', req);
+}
+
 // ── /review ────────────────────────────────────────────────────────────────
 //
 // Pending suggestions from the cleaning + PII scans, plus auto-drafts for

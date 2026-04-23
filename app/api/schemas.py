@@ -164,6 +164,65 @@ class ModelConfig(BaseModel):
     model: str
 
 
+class TaskModelMap(BaseModel):
+    """Per-task model routing. Empty string means "no override — use the
+    .env-configured default" for that task."""
+
+    toolcall: str = ""
+    reasoning: str = ""
+    description: str = ""
+    stale: str = ""
+    scoring: str = ""
+    classification: str = ""
+
+
+class LLMConfigResponse(BaseModel):
+    """Snapshot for the LLM setup screen. Never includes the raw API key —
+    `api_key_preview` is the masked last-4 so the UI can confirm a key
+    is active without letting it be copy-paste-leaked."""
+
+    api_key_set: bool
+    api_key_preview: str
+    base_url: str
+    model: str
+    per_task_models: TaskModelMap
+    env_defaults: TaskModelMap
+
+
+class SetLLMConfigRequest(BaseModel):
+    """Body for POST /llm/config. All fields optional — omit to keep
+    the current value. Per-task overrides inside `per_task_models` use
+    empty string as the "clear" signal (distinct from omitted)."""
+
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    per_task_models: TaskModelMap | None = None
+
+
+class LLMTestRequest(BaseModel):
+    """Optional body for POST /llm/test. If any field is set, the test
+    uses those values instead of the persisted override — lets the UI
+    verify a candidate config before saving it."""
+
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class LLMTestResponse(BaseModel):
+    """One ping-and-decode round trip. `response` is the first 200 chars
+    of what the model returned to the canonical test prompt; `error` is
+    set when `ok` is False."""
+
+    ok: bool
+    model: str
+    base_url: str
+    latency_ms: int
+    response: str
+    error: str | None = None
+
+
 # ── /review ───────────────────────────────────────────────────────────────
 
 

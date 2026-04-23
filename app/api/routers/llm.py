@@ -1,16 +1,25 @@
-"""LLM config surface for the React port — slice 4 of Phase 2.
+"""LLM config surface for the React port.
 
-Two endpoints:
-  * GET  /llm/catalog  — available OpenRouter models (dynamic, with curated
-                         fallback) plus the currently selected model id.
-  * POST /llm/model    — change the active model; clears the get_llm cache
-                         via `llm.set_model()` and drops the cached agent so
-                         the next /chat/stream rebuilds with the new model.
+Phase 2 slice 4 shipped /llm/catalog + /llm/model. Phase 3.5 slice 2b adds
+the rest of the settings surface so the LLMSetup screen can drive:
 
-Slice-4 scope is deliberately narrow: only the shared `model` field changes.
-api_key / base_url continue to come from `.env`; per-task routing isn't
-exposed here yet. The Streamlit sidebar has a richer LLM-setup modal — we
-port that in a later phase.
+  * GET  /llm/catalog     — available OpenRouter models + currently-active one
+  * GET  /llm/config      — current override state (api_key mask + base_url
+                            + shared model + per-task overrides)
+  * POST /llm/model       — shared model only (legacy, used by ModelQuickPicker)
+  * POST /llm/config      — full override: api_key + base_url + model +
+                            per_task_models. Unknown fields pass through as
+                            "keep current" (omit to change just model, for
+                            example). Triggers the same agent rebuild as
+                            /llm/model.
+  * DELETE /llm/config    — clear the override entirely; fall back to .env
+  * POST /llm/test        — ping the LLM with the current override (or with
+                            a candidate config passed in the body) and
+                            return latency + a short canned completion
+
+Key handling: the API never echoes the full key back. `GET /llm/config`
+returns a short preview (last 4 chars) + boolean `api_key_set`. The frontend
+relies on the preview to signal that a key is active without leaking it.
 """
 
 from __future__ import annotations
@@ -20,11 +29,24 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter
+from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 from loguru import logger
 
+from app.api import errors
 from app.api.routers import chat as chat_router
-from app.api.schemas import LLMCatalogResponse, ModelConfig, SetModelRequest
+from app.api.schemas import (
+    LLMCatalogResponse,
+    LLMConfigResponse,
+    LLMTestRequest,
+    LLMTestResponse,
+    ModelConfig,
+    SetLLMConfigRequest,
+    SetModelRequest,
+    TaskModelMap,
+)
 from app.clients import llm
+from app.clients.llm import TaskType
 from app.config import settings
 
 router = APIRouter(prefix="/llm", tags=["llm"])
@@ -122,3 +144,202 @@ def set_model(req: SetModelRequest) -> ModelConfig:
     chat_router.invalidate_agent()
     logger.info(f"llm model switched to {req.model!r}, agent invalidated")
     return ModelConfig(model=_current_model())
+
+
+# ── Full config surface (Phase 3.5 slice 2b) ──────────────────────────────
+
+
+_TASK_KEYS: tuple[TaskType, ...] = (
+    "toolcall",
+    "reasoning",
+    "description",
+    "stale",
+    "scoring",
+    "classification",
+)
+
+
+def _mask_key(key: str | None) -> str:
+    """Return a last-4-chars preview for UI display. Never echo the full key."""
+    if not key:
+        return ""
+    cleaned = key.strip()
+    if len(cleaned) <= 4:
+        return "•" * len(cleaned)
+    return "•" * 8 + cleaned[-4:]
+
+
+def _active_base_url() -> str:
+    o = llm.get_override()
+    return (o.base_url if o and o.base_url else settings.openrouter_base_url) or ""
+
+
+def _active_api_key() -> str:
+    o = llm.get_override()
+    return (o.api_key if o and o.api_key else settings.openrouter_api_key) or ""
+
+
+def _collect_per_task_overrides() -> dict[str, str]:
+    o = llm.get_override()
+    if o is None:
+        return {}
+    return {k: v for k, v in o.per_task_models}
+
+
+@router.get("/config", response_model=LLMConfigResponse)
+def get_config() -> LLMConfigResponse:
+    """Snapshot of the current override + fallback values so the Settings
+    UI can preload without leaking the API key. `per_task_models` includes
+    every task the engines route on, with an empty string when no override
+    is set (falls back to `.env`-configured default)."""
+    overrides = _collect_per_task_overrides()
+    per_task = TaskModelMap(
+        toolcall=overrides.get("toolcall", ""),
+        reasoning=overrides.get("reasoning", ""),
+        description=overrides.get("description", ""),
+        stale=overrides.get("stale", ""),
+        scoring=overrides.get("scoring", ""),
+        classification=overrides.get("classification", ""),
+    )
+    env_per_task = TaskModelMap(
+        toolcall=settings.model_toolcall,
+        reasoning=settings.model_reasoning,
+        description=settings.model_description,
+        stale=settings.model_stale,
+        scoring=settings.model_scoring,
+        classification=settings.model_classification,
+    )
+    key = _active_api_key()
+    return LLMConfigResponse(
+        api_key_set=bool(key),
+        api_key_preview=_mask_key(key),
+        base_url=_active_base_url(),
+        model=_current_model(),
+        per_task_models=per_task,
+        env_defaults=env_per_task,
+    )
+
+
+@router.post("/config", response_model=LLMConfigResponse)
+def set_config(req: SetLLMConfigRequest) -> LLMConfigResponse:
+    """Apply a full override. Each top-level field is optional — omit to
+    keep the current value for that field.
+
+    Per-task semantics — careful: `per_task_models` is treated as an
+    authoritative replacement. Pydantic defaults all six keys to "", so
+    sending `{}` materialises six empty strings and CLEARS every task
+    override (since empty string → None via `_clean`). If you want to
+    change just one task, send the other five as their current values
+    (the Settings UI does this by spreading the full 6-key `routes`
+    object). To leave ALL per-task routing untouched, omit the field
+    entirely (set to `null`).
+
+    Triggers an agent rebuild so the next /chat/stream picks up the new
+    config. Session-scoped — config doesn't persist across restarts.
+    """
+    current = llm.get_override()
+
+    # Shared creds: preserve unspecified fields. Sentinel `None` means
+    # "don't change"; empty string "" means "clear".
+    new_key = req.api_key if req.api_key is not None else (current.api_key if current else None)
+    new_base = (
+        req.base_url if req.base_url is not None else (current.base_url if current else None)
+    )
+    new_model = req.model if req.model is not None else (current.model if current else None)
+
+    llm.set_override(api_key=new_key, base_url=new_base, model=new_model)
+
+    if req.per_task_models is not None:
+        incoming = req.per_task_models.model_dump()
+        for task_key in _TASK_KEYS:
+            val = incoming.get(task_key)
+            if val is None:
+                continue  # not touched
+            # Empty string clears, else set.
+            llm.set_task_model(task_key, val or None)
+
+    chat_router.invalidate_agent()
+    logger.info(
+        "llm config updated · model={!r} base_url={!r} api_key_set={} per_task_keys={}".format(
+            new_model,
+            new_base,
+            bool(new_key),
+            list((req.per_task_models.model_dump() if req.per_task_models else {}).keys()),
+        )
+    )
+    return get_config()
+
+
+@router.delete("/config", response_model=LLMConfigResponse)
+def reset_config() -> LLMConfigResponse:
+    """Wipe the session override; subsequent calls fall back to `.env`."""
+    llm.clear_override()
+    chat_router.invalidate_agent()
+    logger.info("llm override cleared, agent invalidated")
+    return get_config()
+
+
+@router.post("/test", response_model=LLMTestResponse)
+def test_connection(req: LLMTestRequest | None = None) -> LLMTestResponse:
+    """Ping the configured provider with a deterministic prompt and return
+    latency + the raw response. If `req.model` / `req.api_key` /
+    `req.base_url` is provided, the test uses those values WITHOUT
+    persisting them — lets the Settings UI verify credentials before the
+    user hits Save. Omit the body to test the currently active config.
+
+    The prompt is intentionally tight ("respond with exactly: MetaSift
+    ready") so the round-trip stays under 1-2s on most providers.
+    """
+    body = req or LLMTestRequest()
+    model = (body.model or _current_model()).strip()
+    base_url = (body.base_url or _active_base_url()).strip()
+    api_key = body.api_key if body.api_key is not None else _active_api_key()
+
+    if not api_key:
+        raise errors.ApiError(
+            errors.ErrorCode.LLM_UNAVAILABLE,
+            "No API key configured. Paste one in the Settings screen or set OPENROUTER_API_KEY.",
+            status_code=400,
+        )
+    if not model:
+        raise errors.ApiError(
+            errors.ErrorCode.INVALID_REQUEST,
+            "model must resolve to a non-empty string.",
+        )
+
+    prompt = "respond with exactly: MetaSift ready"
+    started = time.perf_counter()
+    try:
+        client = ChatOpenAI(
+            model=model,
+            base_url=base_url or None,
+            api_key=api_key,
+            temperature=0.0,
+            max_tokens=32,
+            timeout=15,
+        )
+        result = client.invoke([HumanMessage(content=prompt)])
+    except Exception as e:
+        logger.warning(f"llm connection test failed: {e}")
+        return LLMTestResponse(
+            ok=False,
+            model=model,
+            base_url=base_url,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            response="",
+            error=str(e),
+        )
+
+    text = result.content if hasattr(result, "content") else str(result)
+    if isinstance(text, list):
+        text = " ".join(
+            part.get("text", "") for part in text if isinstance(part, dict) and "text" in part
+        )
+    return LLMTestResponse(
+        ok=True,
+        model=model,
+        base_url=base_url,
+        latency_ms=int((time.perf_counter() - started) * 1000),
+        response=str(text).strip()[:200],
+        error=None,
+    )

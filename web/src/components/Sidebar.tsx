@@ -46,7 +46,6 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'viz', label: 'Visualizations', desc: '11 tabs', to: '/viz', icon: 'viz' },
   { key: 'dq', label: 'Data quality', desc: 'Failures · gaps · risk', to: '/dq', icon: 'dq' },
   { key: 'report', label: 'Executive report', desc: 'Markdown export', to: '/report', icon: 'doc' },
-  // LLM setup modal lands in slice 2; kept as a disabled nav entry for now.
   { key: 'llm', label: 'LLM setup', desc: 'Provider · model · keys', to: '/settings', icon: 'llm' },
 ];
 
@@ -207,49 +206,31 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 function NavRow({ item, active, badge }: { item: NavItem; active: boolean; badge?: number }) {
-  const disabled = item.key === 'llm';
   const base =
     'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition group border';
   const activeCls = 'bg-emerald-500/10 border-emerald-500/20';
   const idleCls = 'border-transparent hover:bg-slate-900/80';
-  const disabledCls = 'border-transparent opacity-50 cursor-not-allowed';
 
-  const iconBox = (
-    <div
-      className={`w-7 h-7 rounded-md flex items-center justify-center ${
-        active ? 'bg-emerald-500/15' : 'bg-slate-900 group-hover:bg-slate-800'
-      }`}
-    >
-      <NavIcon kind={item.icon} active={active} />
-    </div>
-  );
-  const body = (
-    <div className="flex-1">
-      <div className={`text-[13px] font-medium ${active ? 'text-white' : 'text-slate-300'}`}>
-        {item.label}
-      </div>
-      <div className="text-[10px] text-slate-500">{item.desc}</div>
-    </div>
-  );
-  const badgeEl = badge ? (
-    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">
-      {badge}
-    </span>
-  ) : null;
-
-  if (disabled) {
-    return (
-      <button type="button" className={`${base} ${disabledCls}`} disabled title="Coming in slice 2">
-        {iconBox}
-        {body}
-      </button>
-    );
-  }
   return (
     <Link to={item.to} className={`${base} ${active ? activeCls : idleCls}`}>
-      {iconBox}
-      {body}
-      {badgeEl}
+      <div
+        className={`w-7 h-7 rounded-md flex items-center justify-center ${
+          active ? 'bg-emerald-500/15' : 'bg-slate-900 group-hover:bg-slate-800'
+        }`}
+      >
+        <NavIcon kind={item.icon} active={active} />
+      </div>
+      <div className="flex-1">
+        <div className={`text-[13px] font-medium ${active ? 'text-white' : 'text-slate-300'}`}>
+          {item.label}
+        </div>
+        <div className="text-[10px] text-slate-500">{item.desc}</div>
+      </div>
+      {badge ? (
+        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">
+          {badge}
+        </span>
+      ) : null}
     </Link>
   );
 }

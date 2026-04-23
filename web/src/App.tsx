@@ -13,6 +13,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { DQ } from './screens/DQ';
 import { Report } from './screens/Report';
 import { Review } from './screens/Review';
+import { Settings } from './screens/Settings';
 import { Stew } from './screens/Stew';
 import { StewConversation } from './screens/StewConversation';
 import { Viz } from './screens/Viz';
@@ -27,6 +28,7 @@ export function App() {
       <Route path="/viz" element={<Viz />} />
       <Route path="/dq" element={<DQ />} />
       <Route path="/report" element={<Report />} />
+      <Route path="/settings" element={<Settings />} />
     </Routes>
   );
 }
