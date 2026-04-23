@@ -6,6 +6,8 @@
 
 import { Link } from 'react-router-dom';
 
+import { ScanPanel } from './ScanPanel';
+
 type NavKey = 'dashboard' | 'stew' | 'review' | 'viz' | 'dq' | 'report';
 
 interface NavItem {
@@ -63,8 +65,9 @@ export function Sidebar({ activeKey }: { activeKey: NavKey }) {
           );
         })}
       </nav>
+      <ScanPanel />
       <div className="mt-auto text-ink-dim text-mini font-mono">
-        Phase 2 · Stew chat
+        Phase 3 · review + scans
       </div>
     </aside>
   );

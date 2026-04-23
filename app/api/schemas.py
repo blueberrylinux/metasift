@@ -7,7 +7,7 @@ review, viz, and report shapes as they're implemented.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -201,3 +201,44 @@ class ReviewAcceptResponse(BaseModel):
     action_id: int
     status: Literal["accepted", "rejected", "accepted_edited"]
     after_val: str
+
+
+# ── /scans ────────────────────────────────────────────────────────────────
+
+
+class BulkDocRequest(BaseModel):
+    """Body for POST /scans/bulk-doc. The Streamlit agent path defaults to
+    20 tables per run to bound LLM cost; matching that here."""
+
+    schema_name: str = Field(min_length=1)
+    max_tables: int = Field(default=20, ge=1, le=500)
+
+    @field_validator("schema_name")
+    @classmethod
+    def _reject_whitespace(cls, v: str) -> str:
+        # Same bug class as SetModelRequest — `min_length=1` lets `"   "` through,
+        # and the engine then silently no-ops rather than 422'ing.
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("schema_name must be a non-empty, non-whitespace string")
+        return stripped
+
+
+class ScanRun(BaseModel):
+    """One row from the scan_runs audit table. `counts` is whatever the
+    engine's run_fn returned; `error` is set when status == 'failed'."""
+
+    id: int
+    kind: str
+    started_at: str
+    finished_at: str | None = None
+    status: Literal["running", "completed", "failed", "cancelled"]
+    counts: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class ScanStatusResponse(BaseModel):
+    """Last-run info per kind. None when a kind has never run. Keys are the
+    stable scan-kind identifiers the SSE endpoints start scans under."""
+
+    kinds: dict[str, ScanRun | None]

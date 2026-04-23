@@ -268,6 +268,37 @@ def start_scan(kind: str) -> int:
         return cur.lastrowid or 0
 
 
+def try_start_scan(kind: str) -> int | None:
+    """Atomically claim a scan slot. Returns a fresh run_id if no other run of
+    this kind is currently `running`, else None. Closes the TOCTOU gap that
+    `scan_is_running(...)` + `start_scan(...)` leaves open when two requests
+    race on the same kind.
+
+    The connection is autocommit (`isolation_level=None`, see get_conn), so a
+    plain `with conn` isn't transactional — using explicit BEGIN/COMMIT the
+    same way `append_exchange` does.
+    """
+    conn = get_conn()
+    conn.execute("BEGIN")
+    try:
+        existing = conn.execute(
+            "SELECT 1 FROM scan_runs WHERE kind = ? AND status = 'running' LIMIT 1",
+            (kind,),
+        ).fetchone()
+        if existing is not None:
+            conn.execute("COMMIT")
+            return None
+        cur = conn.execute(
+            "INSERT INTO scan_runs (kind, status) VALUES (?, 'running')",
+            (kind,),
+        )
+        conn.execute("COMMIT")
+        return cur.lastrowid or 0
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def finish_scan(
     run_id: int,
     *,

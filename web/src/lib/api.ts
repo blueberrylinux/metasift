@@ -340,3 +340,124 @@ export function acceptEditedReview(itemId: string, value: string): Promise<Revie
 export function rejectReview(itemId: string): Promise<ReviewAcceptResponse> {
   return postJSON<ReviewAcceptResponse>(`/review/${encodeURIComponent(itemId)}/reject`);
 }
+
+// ── /scans ─────────────────────────────────────────────────────────────────
+//
+// Each endpoint is an SSE POST mirroring the /chat/stream adapter — same
+// \r\n\r\n tolerance, same fetch-plus-ReadableStream plumbing. Three frame
+// types: progress, done, error. Scans without a progress_cb (refresh,
+// pii_scan) emit only done or error.
+
+export type ScanKind =
+  | 'refresh'
+  | 'deep_scan'
+  | 'pii_scan'
+  | 'dq_explain'
+  | 'dq_recommend'
+  | 'bulk_doc';
+
+// URL-path form differs from the store/kind id for the two snake_case kinds.
+const SCAN_PATH: Record<ScanKind, string> = {
+  refresh: 'refresh',
+  deep_scan: 'deep-scan',
+  pii_scan: 'pii-scan',
+  dq_explain: 'dq-explain',
+  dq_recommend: 'dq-recommend',
+  bulk_doc: 'bulk-doc',
+};
+
+export type ScanFrame =
+  | { type: 'progress'; run_id: number; step: number; total: number; label: string }
+  | { type: 'done'; run_id: number; counts: Record<string, unknown> }
+  | { type: 'error'; run_id: number; message: string };
+
+export interface BulkDocBody {
+  schema_name: string;
+  max_tables?: number;
+}
+
+export interface ScanRun {
+  id: number;
+  kind: string;
+  started_at: string;
+  finished_at: string | null;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  counts: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export interface ScanStatusResponse {
+  kinds: Record<string, ScanRun | null>;
+}
+
+export function getScanStatus(): Promise<ScanStatusResponse> {
+  return getJSON<ScanStatusResponse>('/scans/status');
+}
+
+// Parse an SSE block the same way `parseSSEBlock` does for /chat/stream, but
+// typed to the ScanFrame union. Extracted inline — lifting into a shared
+// helper would require widening the frame type and lose the narrowing the
+// two callers get today.
+function parseSSEBlockScan(block: string): ScanFrame | null {
+  const dataLines: string[] = [];
+  for (const line of block.split(/\r\n|\n|\r/)) {
+    if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5));
+  }
+  if (!dataLines.length) return null;
+  try {
+    return JSON.parse(dataLines.join('\n')) as ScanFrame;
+  } catch {
+    return null;
+  }
+}
+
+export async function streamScan(
+  kind: ScanKind,
+  onFrame: (frame: ScanFrame) => void,
+  body?: BulkDocBody,
+  signal?: AbortSignal,
+): Promise<void> {
+  const path = `/scans/${SCAN_PATH[kind]}`;
+  const r = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  });
+  if (!r.ok) {
+    // 409 scan_already_running, 503 om_unreachable, 422 on a malformed body.
+    await parseOrThrow<unknown>(r, path);
+    return;
+  }
+  if (!r.body) throw new ApiError('internal_error', `${path}: empty body`);
+
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      while (true) {
+        const m = /\r\n\r\n|\n\n|\r\r/.exec(buf);
+        if (!m) break;
+        const block = buf.slice(0, m.index);
+        buf = buf.slice(m.index + m[0].length);
+        const frame = parseSSEBlockScan(block);
+        if (frame) onFrame(frame);
+      }
+    }
+    if (buf.trim()) {
+      const frame = parseSSEBlockScan(buf);
+      if (frame) onFrame(frame);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // already released
+    }
+  }
+}
