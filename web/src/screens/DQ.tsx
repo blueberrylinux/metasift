@@ -235,10 +235,97 @@ function FailureCard({ f }: { f: DQFailure }) {
           <ExplanationRow label="Summary" value={f.explanation.summary} />
           <ExplanationRow label="Likely cause" value={f.explanation.likely_cause} />
           <ExplanationRow label="Next step" value={f.explanation.next_step} emphasise />
+          <FixTypeActions failure={f} />
         </div>
       )}
     </div>
   );
+}
+
+// Contextual next-step actions keyed to fix_type. Lifted from
+// metasift+/MetaSift App.html::fixActions (L1627-L1635). The Copy actions
+// drop a stubbed SQL/message onto the clipboard; the "open" / "ping" /
+// "queue" actions are placeholders without a backend — disabled with a
+// tooltip so users know they're scaffolded, not missing.
+function FixTypeActions({ failure }: { failure: DQFailure }) {
+  if (!failure.explanation) return null;
+  const actions = actionsFor(failure);
+  return (
+    <div>
+      <div className="text-mini font-mono uppercase tracking-wider text-ink-dim">
+        Suggested next-steps
+      </div>
+      <div className="flex flex-wrap gap-2 mt-1">
+        {actions.map((a) => (
+          <button
+            key={a.label}
+            type="button"
+            onClick={a.onClick}
+            disabled={a.disabled}
+            title={a.disabled ? 'Not wired in the port yet — scaffolded surface.' : a.title}
+            className={
+              'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-mono transition ' +
+              (a.disabled
+                ? 'border-slate-800 bg-slate-900/40 text-slate-600 cursor-not-allowed'
+                : 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-emerald-500/40 hover:text-emerald-300')
+            }
+          >
+            <span aria-hidden>{a.icon}</span>
+            {a.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface FixAction {
+  icon: string;
+  label: string;
+  title?: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}
+
+function actionsFor(f: DQFailure): FixAction[] {
+  const fix = f.explanation?.fix_type ?? 'other';
+  const sql = buildSqlStub(f);
+  const copy = (text: string, label: string): FixAction => ({
+    icon: '📋',
+    label,
+    title: `Copy generated stub to clipboard`,
+    onClick: () => {
+      if (navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(text);
+      }
+    },
+  });
+  switch (fix) {
+    case 'schema_change':
+      return [copy(sql.alter, 'Copy ALTER SQL'), scaffold('🔗', 'Open schema diff')];
+    case 'etl_investigation':
+      return [copy(sql.select, 'Copy SELECT'), scaffold('🔗', 'Open pipeline')];
+    case 'data_correction':
+      return [copy(sql.update, 'Copy UPDATE'), scaffold('↷', 'Queue backfill')];
+    case 'upstream_fix':
+      return [scaffold('✉', 'Ping producer'), scaffold('🔗', 'Open upstream')];
+    default:
+      return [scaffold('✎', 'Classify manually')];
+  }
+}
+
+function scaffold(icon: string, label: string): FixAction {
+  return { icon, label, disabled: true };
+}
+
+function buildSqlStub(f: DQFailure): { alter: string; select: string; update: string } {
+  const table = f.table_fqn || '<table>';
+  const col = f.column_name || '<column>';
+  return {
+    alter: `-- TODO: generated from fix_type=${f.explanation?.fix_type}\nALTER TABLE ${table}\n  ADD CONSTRAINT ${col}_not_null CHECK (${col} IS NOT NULL);`,
+    select: `-- Investigate recent failing rows for ${f.test_name}\nSELECT *\nFROM ${table}\nWHERE ${col} IS NULL\nLIMIT 50;`,
+    update: `-- Dry-run a backfill for ${f.test_name}\nUPDATE ${table}\nSET ${col} = '<fill-value>'\nWHERE ${col} IS NULL;`,
+  };
 }
 
 function ExplanationRow({
