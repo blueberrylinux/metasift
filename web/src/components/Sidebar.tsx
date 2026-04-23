@@ -22,7 +22,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'review', label: 'Review queue', to: '/review' },
   { key: 'viz', label: 'Visualizations', to: '/viz' },
   { key: 'dq', label: 'Data quality', to: '/dq' },
-  { key: 'report', label: 'Report' },
+  { key: 'report', label: 'Report', to: '/report' },
 ];
 
 export function Sidebar({ activeKey }: { activeKey: NavKey }) {
@@ -67,7 +67,7 @@ export function Sidebar({ activeKey }: { activeKey: NavKey }) {
       </nav>
       <ScanPanel />
       <div className="mt-auto text-ink-dim text-mini font-mono">
-        Phase 3 · review + scans
+        Phase 3 complete
       </div>
     </aside>
   );

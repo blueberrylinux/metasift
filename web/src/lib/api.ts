@@ -552,6 +552,21 @@ export function getDQImpact(fqn: string): Promise<DQImpactResponse> {
   return getJSON<DQImpactResponse>(`/dq/impact/${encodeURIComponent(fqn)}`);
 }
 
+// ── /report ────────────────────────────────────────────────────────────────
+//
+// Full executive report — single GET, cheap enough to regenerate on every
+// /report visit. The UI renders `markdown` with react-markdown + remark-gfm
+// and offers it as a .md download.
+
+export interface ReportResponse {
+  markdown: string;
+  generated_at: string;
+}
+
+export function getReport(): Promise<ReportResponse> {
+  return getJSON<ReportResponse>('/report');
+}
+
 export async function streamScan(
   kind: ScanKind,
   onFrame: (frame: ScanFrame) => void,

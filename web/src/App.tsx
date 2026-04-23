@@ -10,6 +10,7 @@ import { Route, Routes } from 'react-router-dom';
 
 import { Dashboard } from './screens/Dashboard';
 import { DQ } from './screens/DQ';
+import { Report } from './screens/Report';
 import { Review } from './screens/Review';
 import { Stew } from './screens/Stew';
 import { StewConversation } from './screens/StewConversation';
@@ -24,6 +25,7 @@ export function App() {
       <Route path="/review" element={<Review />} />
       <Route path="/viz" element={<Viz />} />
       <Route path="/dq" element={<DQ />} />
+      <Route path="/report" element={<Report />} />
     </Routes>
   );
 }

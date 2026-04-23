@@ -373,3 +373,15 @@ class DQImpactResponse(BaseModel):
     pii_downstream: int
     downstream_fqns: list[str]
     risk_score: float
+
+
+# ── /report ───────────────────────────────────────────────────────────────
+
+
+class ReportResponse(BaseModel):
+    """Executive report — a single markdown string plus the ISO-8601 UTC
+    timestamp of generation. The UI renders `markdown` with react-markdown +
+    remark-gfm and offers it as a .md download."""
+
+    markdown: str
+    generated_at: str
