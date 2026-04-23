@@ -1,7 +1,8 @@
 # MetaSift dev commands
 # Run `make help` for the full list.
 
-.PHONY: help install dev run stack-up stack-down stack-logs seed clean lint test token
+.PHONY: help install dev run stack-up stack-down stack-logs seed clean lint test token \
+        api web web-install build-web port-dev
 
 help:
 	@echo "MetaSift dev commands"
@@ -11,11 +12,18 @@ help:
 	@echo "  make stack-logs  — tail OpenMetadata server logs"
 	@echo "  make token       — print instructions for getting a JWT token"
 	@echo "  make seed        — populate OpenMetadata with messy demo data"
-	@echo "  make run         — launch MetaSift Streamlit app"
+	@echo "  make run         — launch MetaSift Streamlit app (port 8501)"
 	@echo "  make dev         — stack-up + seed + run (one command bootstrap)"
 	@echo "  make lint        — ruff check + format"
 	@echo "  make test        — pytest"
 	@echo "  make clean       — remove venv, caches, duckdb files"
+	@echo ""
+	@echo "Port targets (port/fastapi-react branch — FastAPI + React UI)"
+	@echo "  make api         — launch FastAPI backend (port 8000)"
+	@echo "  make web-install — install React/Vite deps (run once)"
+	@echo "  make web         — launch Vite dev server (port 5173)"
+	@echo "  make build-web   — build React bundle into web/dist"
+	@echo "  make port-dev    — run api + web together (parallel)"
 
 install:
 	uv venv --python 3.11
@@ -64,3 +72,23 @@ test:
 clean:
 	rm -rf .venv .pytest_cache .ruff_cache __pycache__ app/__pycache__ app/*/__pycache__
 	rm -f data/*.duckdb data/*.db
+
+# ─── Port targets (FastAPI + React) ────────────────────────────────────────
+# These coexist with the Streamlit targets until Phase 8 cutover.
+
+api:
+	uv run uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
+
+web-install:
+	cd web && npm install
+
+web:
+	@test -d web/node_modules || (echo "→ Installing web deps (one-time)..." && $(MAKE) web-install)
+	cd web && npm run dev
+
+build-web:
+	@test -d web/node_modules || $(MAKE) web-install
+	cd web && npm run build
+
+port-dev:
+	$(MAKE) -j 2 api web

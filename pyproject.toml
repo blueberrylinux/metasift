@@ -30,6 +30,12 @@ dependencies = [
     # UI
     "streamlit>=1.36",
 
+    # API layer (port/fastapi-react — Phase 0 onwards; Streamlit coexists until Phase 8)
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.1",
+    "pydantic-settings>=2.4",
+
     # Utilities
     "python-dotenv>=1.0",
     "httpx>=0.27",
@@ -47,7 +53,16 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["app", "app.clients", "app.engines", "app.ui", "app.utils"]
+packages = [
+    "app",
+    "app.clients",
+    "app.engines",
+    "app.ui",
+    "app.utils",
+    # API layer (port/fastapi-react — Phase 0 onwards)
+    "app.api",
+    "app.api.routers",
+]
 
 [tool.ruff]
 line-length = 100

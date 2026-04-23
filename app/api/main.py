@@ -1,0 +1,75 @@
+"""FastAPI app factory.
+
+Phase 0 scope: boot the app, mount the health router, ensure SQLite migrations
+run on startup. No engine wiring yet — that lands in Phase 1 onwards.
+
+Ports and lifespan are deliberately minimal. Nothing in this file imports or
+rewrites app.main (Streamlit) or app.config — the two run side-by-side.
+"""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from loguru import logger
+
+from app.api import store
+from app.api.config import api_settings
+from app.api.routers import health
+
+PREFIX = "/api/v1"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Startup/shutdown hooks.
+
+    On startup: apply pending SQLite migrations. Everything else is lazy —
+    we don't pre-warm the agent or hydrate DuckDB here because those are
+    expensive and user-initiated.
+
+    On shutdown: nothing to do; SQLite and DuckDB are self-managed.
+    """
+    store.get_conn()  # triggers migrations via _ensure_migrated
+    logger.info(f"MetaSift API ready · sqlite={api_settings.sqlite_path}")
+    yield
+    logger.info("MetaSift API shutting down")
+
+
+app = FastAPI(
+    title="MetaSift API",
+    version="0.5.0-port.0",
+    lifespan=lifespan,
+    docs_url=f"{PREFIX}/docs",
+    redoc_url=f"{PREFIX}/redoc",
+    openapi_url=f"{PREFIX}/openapi.json",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=api_settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(health.router, prefix=PREFIX)
+
+# Mount the built React bundle in prod (SERVE_STATIC=1 ./web/dist exists).
+# Dev: Vite serves :5173 and proxies /api through to :8000 (see web/vite.config.ts).
+if api_settings.serve_static:
+    from pathlib import Path
+
+    dist_path = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
+    if dist_path.exists():
+        app.mount("/", StaticFiles(directory=str(dist_path), html=True), name="web")
+        logger.info(f"Serving static bundle from {dist_path}")
+    else:
+        logger.warning(
+            f"SERVE_STATIC=1 but {dist_path} does not exist. "
+            "Run `make build-web` first."
+        )

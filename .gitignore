@@ -19,3 +19,12 @@ CLAUDE.local.md
 DEVLOG.md
 metasift.egg-info/
 *:Zone.Identifier
+
+# Port (port/fastapi-react branch)
+web/node_modules/
+web/dist/
+web/.vite/
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
