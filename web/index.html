@@ -8,6 +8,27 @@
     <title>MetaSift</title>
   </head>
   <body>
+    <!-- Shared SVG gradient defs referenced by .score-ring-fg + <LogoM>.
+         Lifted from metasift+/MetaSift App.html — keep the linearGradient
+         ids stable; CSS at src/styles/index.css points at `url(#ringGrad)`
+         and any rename here breaks the ring stroke. -->
+    <svg width="0" height="0" style="position: absolute">
+      <defs>
+        <linearGradient id="mGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#6ee7b7" />
+          <stop offset="40%" stop-color="#10b981" />
+          <stop offset="100%" stop-color="#047857" />
+        </linearGradient>
+        <linearGradient id="mGradLight" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#a7f3d0" />
+          <stop offset="100%" stop-color="#10b981" />
+        </linearGradient>
+        <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#34d399" />
+          <stop offset="100%" stop-color="#06b6d4" />
+        </linearGradient>
+      </defs>
+    </svg>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

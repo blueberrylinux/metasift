@@ -1,14 +1,15 @@
 /**
- * Router scaffold. `/` is the dashboard; `/chat` + `/chat/:conversationId`
- * are Stew (Phase 2). Later: `/review`, `/viz`, `/dq`, `/report`, `/settings`.
+ * Router scaffold. Phase 3.5 reshape follows the mockup's information
+ * architecture — no Dashboard screen; `/` lands on Stew (chat home) and
+ * the sidebar owns catalog-health metrics. `/settings` is a placeholder
+ * for slice 2's LLM setup modal.
  *
  * Keeping this thin on purpose: route definitions live here, everything
  * real lives in screens/. QueryClient + BrowserRouter wrap in main.tsx.
  */
 
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
-import { Dashboard } from './screens/Dashboard';
 import { DQ } from './screens/DQ';
 import { Report } from './screens/Report';
 import { Review } from './screens/Review';
@@ -19,7 +20,7 @@ import { Viz } from './screens/Viz';
 export function App() {
   return (
     <Routes>
-      <Route path="/" element={<Dashboard />} />
+      <Route path="/" element={<Navigate to="/chat" replace />} />
       <Route path="/chat" element={<Stew />} />
       <Route path="/chat/:conversationId" element={<StewConversation />} />
       <Route path="/review" element={<Review />} />

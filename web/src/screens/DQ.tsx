@@ -19,7 +19,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { Sidebar } from '../components/Sidebar';
+import { AppLayout } from '../components/AppLayout';
+import { PageHeader } from '../components/PageHeader';
 import {
   ApiError,
   getDQFailures,
@@ -41,25 +42,21 @@ export function DQ() {
   const [tab, setTab] = useState<TabKey>('failures');
 
   return (
-    <div className="min-h-screen bg-ink-bg text-ink-text relative flex">
-      <Sidebar activeKey="dq" />
-      <main className="flex-1 px-10 pt-10 pb-20 max-w-5xl">
-        <header className="flex items-center justify-between mb-6">
-          <div>
-            <div className="text-xs uppercase tracking-widest text-accent-bright font-semibold">
-              MetaSift · Phase 3
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">Data quality</h1>
-            <p className="text-ink-soft text-sm mt-1 max-w-2xl">
-              Failing tests explained in plain English, missing-test recommendations ranked by
-              severity, and catalog-wide risk ranking by downstream blast radius.
-            </p>
-          </div>
-          <Link to="/viz" className="text-xs uppercase tracking-widest text-ink-dim hover:text-accent-soft">
+    <AppLayout activeKey="dq">
+      <PageHeader
+        title="Data quality"
+        subtitle="Failing tests explained in plain English, missing-test recommendations ranked by severity, and catalog-wide risk ranking by downstream blast radius."
+        rightButtons={
+          <Link
+            to="/viz"
+            className="text-[11px] px-2.5 py-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800/60 transition"
+          >
             Viz →
           </Link>
-        </header>
+        }
+      />
 
+      <div className="flex-1 px-6 py-6 max-w-5xl">
         <TabStrip tab={tab} onChange={setTab} />
 
         <div className="mt-6">
@@ -67,8 +64,8 @@ export function DQ() {
           {tab === 'recommendations' && <RecommendationsPanel />}
           {tab === 'risk' && <RiskPanel />}
         </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }
 

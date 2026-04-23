@@ -12,10 +12,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { AppLayout } from '../components/AppLayout';
 import { Composer } from '../components/Composer';
 import { MessageList, type InFlightState } from '../components/MessageList';
 import { ModelQuickPicker } from '../components/ModelQuickPicker';
-import { Sidebar } from '../components/Sidebar';
+import { PageHeader } from '../components/PageHeader';
 import { ApiError, getConversation, streamChat } from '../lib/api';
 
 export function StewConversation() {
@@ -93,33 +94,31 @@ export function StewConversation() {
 
   const onSend = useCallback((text: string) => send.mutate(text), [send]);
 
-  return (
-    <div className="min-h-screen bg-ink-bg text-ink-text relative flex">
-      <Sidebar activeKey="stew" />
-      <main className="flex-1 flex flex-col h-screen">
-        <header className="px-10 pt-8 pb-4 border-b border-ink-border flex items-center justify-between">
-          <div>
-            <Link
-              to="/chat"
-              className="text-xs uppercase tracking-widest text-ink-dim hover:text-accent-soft font-semibold"
-            >
-              ← Stew
-            </Link>
-            <h1 className="text-xl font-bold tracking-tight mt-1">
-              {detail.data?.conversation.title || 'Untitled conversation'}
-            </h1>
-          </div>
-          <div className="text-mini font-mono text-ink-dim">
-            {detail.data ? `${detail.data.messages.length} messages` : ''}
-          </div>
-        </header>
+  const title = detail.data?.conversation.title || 'Untitled conversation';
+  const messageCount = detail.data ? `${detail.data.messages.length} messages` : '';
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-10 py-8">
+  return (
+    <AppLayout activeKey="chat">
+      <div className="flex-1 flex flex-col h-[calc(100vh-3.5rem)]">
+        <PageHeader
+          title={title}
+          backLink={{ to: '/chat', label: '← Stew' }}
+          rightButtons={
+            <span className="text-[10px] font-mono text-slate-500">{messageCount}</span>
+          }
+        />
+
+        <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin px-6 py-6">
           {detail.isLoading ? (
             <EmptyPlaceholder>Loading conversation…</EmptyPlaceholder>
-          ) : detail.error instanceof ApiError && detail.error.code === 'conversation_not_found' ? (
+          ) : detail.error instanceof ApiError &&
+            detail.error.code === 'conversation_not_found' ? (
             <EmptyPlaceholder>
-              That conversation doesn't exist. <Link to="/chat" className="underline">Back to Stew</Link>.
+              That conversation doesn't exist.{' '}
+              <Link to="/chat" className="underline">
+                Back to Stew
+              </Link>
+              .
             </EmptyPlaceholder>
           ) : detail.error ? (
             <EmptyPlaceholder>
@@ -134,23 +133,23 @@ export function StewConversation() {
           )}
         </div>
 
-        <footer className="border-t border-ink-border px-10 py-4 bg-ink-panel/30">
+        <footer className="border-t border-slate-800/80 px-6 py-4 bg-slate-900/30">
           <Composer onSend={onSend} disabled={send.isPending} />
           <ModelQuickPicker />
           {send.error instanceof ApiError ? (
-            <div className="mt-2 text-xs font-mono text-error-soft">
+            <div className="mt-2 text-[11px] font-mono text-red-300">
               {send.error.code}: {send.error.message}
             </div>
           ) : null}
         </footer>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }
 
 function EmptyPlaceholder({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-center h-full text-ink-dim text-sm">
+    <div className="flex items-center justify-center h-full text-slate-400 text-sm">
       {children}
     </div>
   );

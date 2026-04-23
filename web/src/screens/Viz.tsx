@@ -12,8 +12,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { AppLayout } from '../components/AppLayout';
+import { PageHeader } from '../components/PageHeader';
 import { PlotTab } from '../components/PlotTab';
-import { Sidebar } from '../components/Sidebar';
 import { ApiError, listVizTabs } from '../lib/api';
 
 export function Viz() {
@@ -31,25 +32,21 @@ export function Viz() {
   const activeTab = rows.find((t) => t.slug === active) ?? null;
 
   return (
-    <div className="min-h-screen bg-ink-bg text-ink-text relative flex">
-      <Sidebar activeKey="viz" />
-      <main className="flex-1 px-10 pt-10 pb-20 max-w-6xl">
-        <header className="flex items-center justify-between mb-6">
-          <div>
-            <div className="text-xs uppercase tracking-widest text-accent-bright font-semibold">
-              MetaSift · Phase 3
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">Visualizations</h1>
-            <p className="text-ink-soft text-sm mt-1 max-w-2xl">
-              Interactive views across your catalog. Charts update after each Refresh / Deep scan /
-              PII scan — some tabs need specific scans run first.
-            </p>
-          </div>
-          <Link to="/chat" className="text-xs uppercase tracking-widest text-ink-dim hover:text-accent-soft">
+    <AppLayout activeKey="viz">
+      <PageHeader
+        title="Visualizations"
+        subtitle="Interactive views across your catalog. Charts update after each Refresh / Deep scan / PII scan — some tabs need specific scans run first."
+        rightButtons={
+          <Link
+            to="/chat"
+            className="text-[11px] px-2.5 py-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800/60 transition"
+          >
             Stew →
           </Link>
-        </header>
+        }
+      />
 
+      <div className="flex-1 px-6 py-6 max-w-6xl">
         {tabs.isLoading ? (
           <Placeholder>Loading tabs…</Placeholder>
         ) : tabs.error instanceof ApiError ? (
@@ -61,7 +58,7 @@ export function Viz() {
         ) : (
           <>
             <div
-              className="flex flex-wrap gap-1 mb-6 border-b border-ink-border pb-3"
+              className="flex flex-wrap gap-1 mb-6 border-b border-slate-800/80 pb-3"
               role="tablist"
             >
               {rows.map((t) => {
@@ -73,10 +70,10 @@ export function Viz() {
                     role="tab"
                     aria-selected={isActive}
                     className={
-                      'px-3 py-1.5 rounded-md text-xs font-mono border transition-colors whitespace-nowrap ' +
+                      'px-3 py-1.5 rounded-md text-[11px] font-mono border transition-colors whitespace-nowrap ' +
                       (isActive
-                        ? 'bg-accent/30 text-accent-bright border-accent/40'
-                        : 'bg-ink-panel/40 text-ink-soft border-ink-border hover:text-ink-text hover:border-ink-border')
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : 'bg-slate-900/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700')
                     }
                   >
                     {t.label}
@@ -94,8 +91,8 @@ export function Viz() {
             )}
           </>
         )}
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }
 
@@ -105,8 +102,8 @@ function Placeholder({ children, error }: { children: React.ReactNode; error?: b
       className={
         'rounded-xl border px-6 py-8 text-sm ' +
         (error
-          ? 'border-error/30 bg-error/5 text-error-soft font-mono'
-          : 'border-ink-border bg-ink-panel/40 text-ink-soft')
+          ? 'border-red-500/30 bg-red-500/5 text-red-300 font-mono'
+          : 'border-slate-800 bg-slate-900/40 text-slate-400')
       }
     >
       {children}

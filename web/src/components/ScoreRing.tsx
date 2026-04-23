@@ -1,76 +1,58 @@
 /**
- * Composite-score donut. SVG stroke-dashoffset trick — no chart dependency.
+ * Composite-score donut. Lifted from metasift+/MetaSift App.html::ScoreRing
+ * (L275-L293) — gradient stroke (ring via #ringGrad defined in index.html)
+ * with the score + "Composite" label + delta stacked inside.
  *
- * The ring reads `value` (0-100) and sweeps proportionally. `label` sits
- * beneath the number for context ("Composite score"). The color ramp is
- * keyed to the score: green for healthy, amber for middling, red for bad.
- * Thresholds match the Streamlit version's gauge bands so the two UIs
- * agree visually during the port.
+ * Kept the existing `value` prop name (mapped to `score` in the mockup) so
+ * existing callers don't need to rename.
  */
 
 interface Props {
   value: number;
-  label?: string;
   size?: number;
-  strokeWidth?: number;
+  delta?: string;
 }
 
-function colorFor(score: number): string {
-  if (score >= 75) return '#10b981'; // accent
-  if (score >= 50) return '#f59e0b'; // warn
-  return '#ef4444'; // error
-}
-
-export function ScoreRing({
-  value,
-  label = 'Composite score',
-  size = 200,
-  strokeWidth = 14,
-}: Props) {
+export function ScoreRing({ value, size = 132, delta }: Props) {
   const clamped = Math.max(0, Math.min(100, value));
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const dash = (clamped / 100) * circumference;
-  const color = colorFor(clamped);
+  const r = (size - 12) / 2;
+  const C = 2 * Math.PI * r;
+  const dash = C * (clamped / 100);
 
   return (
     <div
-      className="relative"
+      className="relative flex items-center justify-center"
       style={{ width: size, height: size }}
       role="img"
-      aria-label={`${label}: ${clamped.toFixed(1)} out of 100`}
+      aria-label={`Composite score: ${clamped.toFixed(1)} out of 100`}
     >
       <svg width={size} height={size} className="-rotate-90">
         <circle
           cx={size / 2}
           cy={size / 2}
-          r={radius}
+          r={r}
+          strokeWidth={8}
+          className="score-ring-bg"
           fill="none"
-          stroke="rgba(30,41,59,0.8)"
-          strokeWidth={strokeWidth}
         />
         <circle
           cx={size / 2}
           cy={size / 2}
-          r={radius}
+          r={r}
+          strokeWidth={8}
           fill="none"
-          stroke={color}
-          strokeWidth={strokeWidth}
           strokeLinecap="round"
-          strokeDasharray={`${dash} ${circumference - dash}`}
-          style={{ transition: 'stroke-dasharray 500ms ease-out' }}
+          className="score-ring-fg"
+          strokeDasharray={`${dash} ${C}`}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <span
-          className="font-mono font-bold tracking-tight leading-none"
-          style={{ color, fontSize: size * 0.22 }}
-        >
+        <div className="text-[10px] uppercase tracking-wider text-slate-500">Composite</div>
+        <div className="text-2xl font-bold text-white leading-none mt-0.5">
           {clamped.toFixed(1)}
-        </span>
-        <span className="text-ink-dim text-tiny uppercase tracking-widest mt-2">
-          {label}
-        </span>
+          <span className="text-sm text-slate-400">%</span>
+        </div>
+        {delta && <div className="text-[10px] text-amber-300/80 mt-1 font-medium">{delta}</div>}
       </div>
     </div>
   );

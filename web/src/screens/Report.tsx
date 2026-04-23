@@ -13,7 +13,8 @@ import { useQuery } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 
-import { Sidebar } from '../components/Sidebar';
+import { AppLayout } from '../components/AppLayout';
+import { PageHeader } from '../components/PageHeader';
 import { ApiError, getReport } from '../lib/api';
 
 const Markdown = lazy(() => import('../components/ReportMarkdown'));
@@ -41,64 +42,59 @@ export function Report() {
     URL.revokeObjectURL(url);
   };
 
-  return (
-    <div className="min-h-screen bg-ink-bg text-ink-text relative flex">
-      <Sidebar activeKey="report" />
-      <main className="flex-1 px-10 pt-10 pb-20 max-w-4xl">
-        <header className="flex items-start justify-between mb-6 gap-4">
-          <div>
-            <div className="text-xs uppercase tracking-widest text-accent-bright font-semibold">
-              MetaSift · Phase 3
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">Executive report</h1>
-            <p className="text-ink-soft text-sm mt-1 max-w-2xl">
-              Stakeholder-ready markdown summary — composite score, coverage, ownership, blast
-              radius, quality, governance, and data-quality findings. Sections skip themselves
-              when the relevant scan hasn't run.
-            </p>
-            {q.data && (
-              <p className="text-xs font-mono text-ink-dim mt-2">
-                Generated {new Date(q.data.generated_at).toLocaleString()}
-              </p>
-            )}
-          </div>
-          <div className="flex gap-2 shrink-0">
-            <button
-              onClick={() => q.refetch()}
-              disabled={q.isFetching}
-              className={
-                'px-3 py-1.5 rounded-md text-xs font-mono border transition-colors ' +
-                (q.isFetching
-                  ? 'bg-ink-panel/40 text-ink-dim border-ink-border cursor-wait'
-                  : 'bg-ink-panel/40 text-ink-soft border-ink-border hover:text-ink-text')
-              }
-            >
-              {q.isFetching ? 'Refreshing…' : 'Regenerate'}
-            </button>
-            <button
-              onClick={download}
-              disabled={!q.data}
-              className={
-                'px-3 py-1.5 rounded-md text-xs font-mono border transition-colors ' +
-                (q.data
-                  ? 'bg-accent/30 hover:bg-accent/40 text-accent-bright border-accent/40'
-                  : 'bg-accent/10 text-accent-soft/60 border-accent/20 cursor-not-allowed')
-              }
-            >
-              📄 Download .md
-            </button>
-          </div>
-        </header>
+  const actions = (
+    <div className="flex gap-2">
+      <button
+        onClick={() => q.refetch()}
+        disabled={q.isFetching}
+        className={
+          'text-[11px] px-2.5 py-1 rounded-md border transition ' +
+          (q.isFetching
+            ? 'text-slate-500 border-slate-800 bg-slate-900/40 cursor-wait'
+            : 'text-slate-300 border-slate-800 bg-slate-900/40 hover:text-white hover:bg-slate-800/60')
+        }
+      >
+        {q.isFetching ? 'Refreshing…' : 'Regenerate'}
+      </button>
+      <button
+        onClick={download}
+        disabled={!q.data}
+        className={
+          'text-[11px] px-2.5 py-1 rounded-md border transition ' +
+          (q.data
+            ? 'text-emerald-300 border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10'
+            : 'text-emerald-300/50 border-emerald-500/10 bg-emerald-500/5 cursor-not-allowed')
+        }
+      >
+        📄 Download .md
+      </button>
+    </div>
+  );
 
+  return (
+    <AppLayout activeKey="report">
+      <PageHeader
+        title="Executive report"
+        subtitle="Stakeholder-ready markdown summary — composite score, coverage, ownership, blast radius, quality, governance, and data-quality findings. Sections skip themselves when the relevant scan hasn't run."
+        chips={
+          q.data
+            ? [{ label: `Generated ${new Date(q.data.generated_at).toLocaleString()}`, tone: 'slate' }]
+            : []
+        }
+        rightButtons={actions}
+      />
+
+      <div className="flex-1 px-6 py-6 max-w-4xl">
         {q.isLoading ? (
           <Placeholder>Generating report…</Placeholder>
         ) : q.error instanceof ApiError && q.error.code === 'no_metadata_loaded' ? (
           <Placeholder>
-            No metadata loaded yet. Hit <strong>Refresh metadata</strong> on the{' '}
-            <Link to="/" className="underline text-accent-soft">
-              dashboard
-            </Link>{' '}
-            first.
+            No metadata loaded yet. Hit <strong>Refresh metadata</strong> from the sidebar's
+            Quick actions, or run{' '}
+            <Link to="/chat" className="underline text-emerald-300">
+              Stew
+            </Link>
+            ' auto-refresh.
           </Placeholder>
         ) : q.error ? (
           <Placeholder error>
@@ -109,8 +105,8 @@ export function Report() {
             <Markdown source={q.data.markdown} />
           </Suspense>
         ) : null}
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }
 
@@ -120,8 +116,8 @@ function Placeholder({ children, error }: { children: React.ReactNode; error?: b
       className={
         'rounded-xl border px-6 py-8 text-sm ' +
         (error
-          ? 'border-error/30 bg-error/5 text-error-soft font-mono'
-          : 'border-ink-border bg-ink-panel/40 text-ink-soft')
+          ? 'border-red-500/30 bg-red-500/5 text-red-300 font-mono'
+          : 'border-slate-800 bg-slate-900/40 text-slate-400')
       }
     >
       {children}

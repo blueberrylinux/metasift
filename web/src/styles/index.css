@@ -94,3 +94,153 @@ a:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.5);
 }
+
+/* ── Lifted verbatim from metasift+/MetaSift App.html ───────────────────── */
+
+/* Page background — radial glow + faint emerald grid (matches App.html). */
+.hero-glow {
+  background-image:
+    radial-gradient(ellipse 60% 50% at 20% 0%, rgba(16, 185, 129, 0.12) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 90% 10%, rgba(16, 185, 129, 0.08) 0%, transparent 60%);
+}
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(16, 185, 129, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 185, 129, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Animated status dot (OM/LLM health, online indicators). */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.3);
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* "Stew is thinking…" typing ellipsis. */
+@keyframes typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+.typing-dot {
+  animation: typing 1.4s infinite;
+}
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Score ring — gradient stroke sits in SVG defs in index.html. */
+.score-ring-bg {
+  stroke: #1e293b;
+}
+.score-ring-fg {
+  stroke: url(#ringGrad);
+  transition: stroke-dashoffset 0.8s ease;
+}
+
+/* Sparklines used inline in chat responses. */
+.spark {
+  fill: none;
+  stroke: #10b981;
+  stroke-width: 1.5;
+}
+
+/* Section accent bar (on PageHeader titles, left-side). */
+.section-accent {
+  position: relative;
+  padding-left: 14px;
+}
+.section-accent::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: linear-gradient(180deg, #34d399, #10b981);
+  border-radius: 2px;
+}
+
+/* Tab underline for active viz / DQ tab. */
+.tab-active {
+  color: #fff;
+}
+.tab-active::after {
+  content: '';
+  display: block;
+  height: 2px;
+  margin-top: 10px;
+  background: linear-gradient(90deg, #34d399, #10b981);
+  border-radius: 2px;
+}
+
+/* Suggestion chip buttons on StewHome. */
+.suggest-btn {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #1e293b;
+  transition: all 0.15s;
+}
+.suggest-btn:hover {
+  background: rgba(16, 185, 129, 0.06);
+  border-color: rgba(16, 185, 129, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Composer glowing gradient ring on focus. */
+.focus-ring {
+  position: relative;
+}
+.focus-ring::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #10b981, #06b6d4, #10b981);
+  background-size: 200% 100%;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: -1;
+}
+.focus-ring:focus-within::after {
+  opacity: 0.5;
+  animation: gradient-slide 3s linear infinite;
+}
+@keyframes gradient-slide {
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* Review queue row hover. */
+.rq-row:hover {
+  background: rgba(16, 185, 129, 0.03);
+}
+
+/* Treemap cells. */
+.tm-cell {
+  transition:
+    transform 0.2s,
+    filter 0.2s;
+}
+.tm-cell:hover {
+  filter: brightness(1.2);
+  z-index: 10;
+}

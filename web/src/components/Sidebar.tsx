@@ -1,74 +1,403 @@
 /**
- * Shared sidebar. Navigation lives here; each screen passes an `activeKey`
- * so the right row lights up. Disabled entries (Review / Viz / DQ / Report)
- * stay until the phases that wire them land.
+ * Sidebar rebuilt from metasift+/MetaSift App.html::Sidebar (L311-L410).
+ * Structure:
+ *   1. Composite health hero — ScoreRing + 2x2 MetricMini grid + weighting bar
+ *   2. Workspace nav — 6 NavIcons (chat / queue / viz / dq / doc / llm)
+ *   3. Quick actions — 5 scan trigger rows with inline progress
+ *   4. Footer — OM + LLM connection status pulses
+ *
+ * Everything lifts hooks from the same query surfaces the screens use
+ * (`['composite']`, `['review']`, `['health']`) so values stay in sync
+ * without a bespoke sidebar query.
  */
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { ScanPanel } from './ScanPanel';
+import {
+  type BulkDocBody,
+  type CompositeScore,
+  type HealthResponse,
+  type ScanFrame,
+  type ScanKind,
+  getComposite,
+  getHealth,
+  listReview,
+  streamScan,
+} from '../lib/api';
+import { MetricMini, type Tone } from './MetricMini';
+import { NavIcon, type NavIconKind } from './NavIcon';
+import { ScoreRing } from './ScoreRing';
 
-type NavKey = 'dashboard' | 'stew' | 'review' | 'viz' | 'dq' | 'report';
+export type NavKey = 'chat' | 'review' | 'viz' | 'dq' | 'report' | 'llm';
 
 interface NavItem {
   key: NavKey;
   label: string;
-  to?: string; // if set, the row is a router link
+  desc: string;
+  to: string;
+  icon: NavIconKind;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { key: 'dashboard', label: 'Dashboard', to: '/' },
-  { key: 'stew', label: 'Stew (chat)', to: '/chat' },
-  { key: 'review', label: 'Review queue', to: '/review' },
-  { key: 'viz', label: 'Visualizations', to: '/viz' },
-  { key: 'dq', label: 'Data quality', to: '/dq' },
-  { key: 'report', label: 'Report', to: '/report' },
+  { key: 'chat', label: 'Stew', desc: 'Metadata wizard', to: '/chat', icon: 'chat' },
+  { key: 'review', label: 'Review queue', desc: 'Accept · edit · reject', to: '/review', icon: 'queue' },
+  { key: 'viz', label: 'Visualizations', desc: '11 tabs', to: '/viz', icon: 'viz' },
+  { key: 'dq', label: 'Data quality', desc: 'Failures · gaps · risk', to: '/dq', icon: 'dq' },
+  { key: 'report', label: 'Executive report', desc: 'Markdown export', to: '/report', icon: 'doc' },
+  // LLM setup modal lands in slice 2; kept as a disabled nav entry for now.
+  { key: 'llm', label: 'LLM setup', desc: 'Provider · model · keys', to: '/settings', icon: 'llm' },
+];
+
+const QUICK_ACTIONS: {
+  kind: ScanKind;
+  icon: string;
+  label: string;
+  sub: string;
+}[] = [
+  { kind: 'refresh', icon: '↻', label: 'Refresh metadata', sub: 'Pull from OpenMetadata' },
+  { kind: 'deep_scan', icon: '⌕', label: 'Deep scan', sub: 'Stale · conflicts · quality' },
+  { kind: 'pii_scan', icon: '⚑', label: 'PII scan', sub: 'Heuristic · zero-LLM' },
+  { kind: 'dq_explain', icon: '🧪', label: 'Explain DQ failures', sub: 'One LLM call per failure' },
+  { kind: 'dq_recommend', icon: '💡', label: 'Recommend DQ tests', sub: 'One LLM call per table' },
 ];
 
 export function Sidebar({ activeKey }: { activeKey: NavKey }) {
+  const composite = useQuery({
+    queryKey: ['composite'],
+    queryFn: getComposite,
+    retry: false,
+  });
+  const pending = useQuery({
+    queryKey: ['review'],
+    queryFn: () => listReview(),
+    retry: false,
+  });
+  const health = useQuery({
+    queryKey: ['health'],
+    queryFn: getHealth,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
   return (
-    <aside className="w-56 min-h-screen border-r border-ink-border bg-ink-panel/40 px-5 pt-10 pb-6 flex flex-col gap-8">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-lg bg-accent-glow border border-accent/30 flex items-center justify-center">
-          <span className="font-bold text-accent-soft text-lg">M</span>
-        </div>
-        <div>
-          <div className="font-bold tracking-tight">MetaSift</div>
-          <div className="text-ink-dim text-mini font-mono">v0.5.0-port.1</div>
-        </div>
-      </div>
-      <nav className="flex flex-col gap-1">
-        {NAV_ITEMS.map((item) => {
-          const active = item.key === activeKey;
-          const base = 'text-left text-sm px-3 py-2 rounded-md transition-colors';
-          const activeCls = 'bg-accent-glow text-accent-soft border border-accent/20';
-          const linkCls = 'text-ink-soft hover:bg-ink-panel/60 hover:text-ink-text';
-          const disabledCls = 'text-ink-dim cursor-not-allowed';
-          if (active && item.to) {
+    <aside className="w-[280px] shrink-0 border-r border-slate-800/80 bg-slate-950/60 flex flex-col h-[calc(100vh-3.5rem)] sticky top-14">
+      <HealthHero composite={composite.data} />
+      <nav className="flex-1 px-3 py-4 overflow-y-auto scrollbar-thin">
+        <SectionLabel>Workspace</SectionLabel>
+        <div className="space-y-1">
+          {NAV_ITEMS.map((item) => {
+            const active = item.key === activeKey;
+            const badge =
+              item.key === 'review' ? pending.data?.rows.length ?? undefined : undefined;
             return (
-              <Link key={item.key} to={item.to} className={`${base} ${activeCls}`}>
-                {item.label}
-              </Link>
+              <NavRow
+                key={item.key}
+                item={item}
+                active={active}
+                badge={badge && badge > 0 ? badge : undefined}
+              />
             );
-          }
-          if (item.to) {
-            return (
-              <Link key={item.key} to={item.to} className={`${base} ${linkCls}`}>
-                {item.label}
-              </Link>
-            );
-          }
-          return (
-            <button key={item.key} disabled className={`${base} ${disabledCls}`}>
-              {item.label}
-            </button>
-          );
-        })}
+          })}
+        </div>
+
+        <div className="mt-6">
+          <SectionLabel>Quick actions</SectionLabel>
+          <div className="space-y-1">
+            {QUICK_ACTIONS.map((a) => (
+              <QuickAction key={a.kind} {...a} />
+            ))}
+          </div>
+        </div>
       </nav>
-      <ScanPanel />
-      <div className="mt-auto text-ink-dim text-mini font-mono">
-        Phase 3 complete
-      </div>
+
+      <StatusFooter health={health.data} />
     </aside>
   );
 }
+
+// ── Health hero ────────────────────────────────────────────────────────────
+
+function HealthHero({ composite }: { composite?: CompositeScore }) {
+  const score = composite?.composite ?? 0;
+  const scanned = composite?.scanned ?? false;
+
+  const coverage: [string, Tone] = [pct(composite?.coverage), 'emerald'];
+  const accuracy: [string, Tone] = scanned
+    ? [pct(composite?.accuracy), 'amber']
+    : ['—', 'red'];
+  const consistency: [string, Tone] = [pct(composite?.consistency), 'amber'];
+  const quality: [string, Tone] = scanned
+    ? [pct(composite?.quality), 'amber']
+    : ['—', 'red'];
+
+  return (
+    <div className="px-5 pt-5 pb-5 border-b border-slate-800/80">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          Catalog health
+        </div>
+        <span className="chip">live</span>
+      </div>
+      <div className="flex flex-col items-center">
+        <ScoreRing value={score} size={124} />
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-3 mt-5">
+        <MetricMini
+          label="Coverage"
+          value={coverage[0]}
+          tone={coverage[1]}
+          delta={scanned ? 'documented' : 'needs refresh'}
+        />
+        <MetricMini
+          label="Accuracy"
+          value={accuracy[0]}
+          tone={accuracy[1]}
+          delta={scanned ? 'non-stale' : 'needs scan'}
+        />
+        <MetricMini
+          label="Consistency"
+          value={consistency[0]}
+          tone={consistency[1]}
+          delta="tag conflicts"
+        />
+        <MetricMini
+          label="Quality"
+          value={quality[0]}
+          tone={quality[1]}
+          delta={scanned ? 'desc score' : 'needs scan'}
+        />
+      </div>
+      {/* Weighting bar — visualises composite's four weights (30/30/20/20). */}
+      <div className="mt-5">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">
+          Weighting
+        </div>
+        <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-800">
+          <div style={{ width: '30%' }} className="bg-emerald-500" />
+          <div style={{ width: '30%' }} className="bg-emerald-500/40" />
+          <div style={{ width: '20%' }} className="bg-cyan-500/80" />
+          <div style={{ width: '20%' }} className="bg-cyan-500/30" />
+        </div>
+        <div className="flex text-[9px] font-mono text-slate-500 mt-1 justify-between">
+          <span>cov 30</span>
+          <span>acc 30</span>
+          <span>con 20</span>
+          <span>qua 20</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function pct(v: number | undefined): string {
+  if (v == null || Number.isNaN(v)) return '—';
+  return `${v.toFixed(1)}%`;
+}
+
+// ── Nav row ────────────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+      {children}
+    </div>
+  );
+}
+
+function NavRow({ item, active, badge }: { item: NavItem; active: boolean; badge?: number }) {
+  const disabled = item.key === 'llm';
+  const base =
+    'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition group border';
+  const activeCls = 'bg-emerald-500/10 border-emerald-500/20';
+  const idleCls = 'border-transparent hover:bg-slate-900/80';
+  const disabledCls = 'border-transparent opacity-50 cursor-not-allowed';
+
+  const iconBox = (
+    <div
+      className={`w-7 h-7 rounded-md flex items-center justify-center ${
+        active ? 'bg-emerald-500/15' : 'bg-slate-900 group-hover:bg-slate-800'
+      }`}
+    >
+      <NavIcon kind={item.icon} active={active} />
+    </div>
+  );
+  const body = (
+    <div className="flex-1">
+      <div className={`text-[13px] font-medium ${active ? 'text-white' : 'text-slate-300'}`}>
+        {item.label}
+      </div>
+      <div className="text-[10px] text-slate-500">{item.desc}</div>
+    </div>
+  );
+  const badgeEl = badge ? (
+    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">
+      {badge}
+    </span>
+  ) : null;
+
+  if (disabled) {
+    return (
+      <button type="button" className={`${base} ${disabledCls}`} disabled title="Coming in slice 2">
+        {iconBox}
+        {body}
+      </button>
+    );
+  }
+  return (
+    <Link to={item.to} className={`${base} ${active ? activeCls : idleCls}`}>
+      {iconBox}
+      {body}
+      {badgeEl}
+    </Link>
+  );
+}
+
+// ── Quick action (scan row with inline progress) ───────────────────────────
+
+interface QuickState {
+  running: boolean;
+  step: number;
+  total: number;
+  label: string;
+  err: string | null;
+}
+
+const INITIAL_STATE: QuickState = {
+  running: false,
+  step: 0,
+  total: 0,
+  label: '',
+  err: null,
+};
+
+function QuickAction({
+  kind,
+  icon,
+  label,
+  sub,
+  body,
+}: {
+  kind: ScanKind;
+  icon: string;
+  label: string;
+  sub: string;
+  body?: BulkDocBody;
+}) {
+  const qc = useQueryClient();
+  const [state, setState] = useState<QuickState>(INITIAL_STATE);
+
+  const run = useMutation({
+    mutationFn: async () => {
+      setState({ ...INITIAL_STATE, running: true, label: 'Starting…' });
+      await streamScan(
+        kind,
+        (frame: ScanFrame) => {
+          setState((prev) => {
+            if (frame.type === 'progress') {
+              return {
+                ...prev,
+                step: frame.step,
+                total: frame.total,
+                label: frame.label,
+              };
+            }
+            if (frame.type === 'done') {
+              return { ...prev, running: false };
+            }
+            return { ...prev, running: false, err: frame.message };
+          });
+        },
+        body,
+      );
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['composite'] });
+      qc.invalidateQueries({ queryKey: ['coverage'] });
+      qc.invalidateQueries({ queryKey: ['review'] });
+      qc.invalidateQueries({ queryKey: ['viz'] });
+      qc.invalidateQueries({ queryKey: ['dq'] });
+      qc.invalidateQueries({ queryKey: ['scan-status'] });
+    },
+    onError: (e) => {
+      setState({ ...INITIAL_STATE, err: e instanceof Error ? e.message : String(e) });
+    },
+  });
+
+  const pctDone = state.running && state.total > 0
+    ? Math.min(100, (state.step / state.total) * 100)
+    : 0;
+
+  return (
+    <button
+      type="button"
+      onClick={() => run.mutate()}
+      disabled={state.running}
+      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/40 hover:border-emerald-500/30 hover:bg-slate-900 transition disabled:opacity-70 disabled:cursor-wait"
+    >
+      <div className="w-6 h-6 rounded bg-slate-800 text-emerald-400 flex items-center justify-center text-sm">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[12px] text-slate-200 truncate">
+          {state.running ? 'Running…' : label}
+        </div>
+        {state.running ? (
+          <div className="mt-1">
+            <div className="h-[2px] w-full bg-slate-800 rounded overflow-hidden">
+              <div
+                className="h-full bg-emerald-500/70 transition-all"
+                style={{ width: `${pctDone}%` }}
+              />
+            </div>
+            {state.total > 0 && (
+              <div className="text-[9px] font-mono text-slate-500 truncate mt-0.5">
+                {state.step}/{state.total} · {state.label}
+              </div>
+            )}
+          </div>
+        ) : state.err ? (
+          <div className="text-[10px] text-red-300 truncate">⚠ {state.err}</div>
+        ) : (
+          <div className="text-[10px] text-slate-500 truncate">{sub}</div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// ── Status footer ──────────────────────────────────────────────────────────
+
+function StatusFooter({ health }: { health?: HealthResponse }) {
+  const om = health?.om ?? false;
+  const llm = health?.llm ?? false;
+  return (
+    <div className="border-t border-slate-800/80 px-5 py-3">
+      <div className="flex items-center justify-between text-[11px]">
+        <div className="flex items-center gap-2">
+          <Dot on={om} />
+          <span className="text-slate-400">OpenMetadata</span>
+          {health?.version && (
+            <span className="text-slate-600 font-mono">{health.version}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Dot on={llm} />
+          <span className="text-slate-400">LLM</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Dot({ on }: { on: boolean }) {
+  return (
+    <span
+      className={
+        'w-1.5 h-1.5 rounded-full pulse-dot ' + (on ? 'bg-emerald-400' : 'bg-slate-600')
+      }
+    />
+  );
+}
+

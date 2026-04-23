@@ -39,8 +39,8 @@ export function PlotTab({ slug, caption }: { slug: string; caption: string }) {
   const q = useQuery({
     queryKey: ['viz', slug],
     queryFn: () => getVizFigure(slug),
-    // Viz figures refresh on scan completion — ScanButton's onSettled path
-    // invalidates the ['viz'] prefix so ['viz', slug] refetches next view.
+    // Viz figures refresh on scan completion — Sidebar's QuickAction onSettled
+    // path invalidates the ['viz'] prefix so ['viz', slug] refetches next view.
   });
 
   if (q.isLoading) {
