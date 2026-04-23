@@ -162,3 +162,42 @@ class ModelConfig(BaseModel):
     """Response shape after POST /llm/model. Just the active model id."""
 
     model: str
+
+
+# ── /review ───────────────────────────────────────────────────────────────
+
+
+class ReviewItem(BaseModel):
+    """One pending suggestion. `key` is the stable identifier the UI sends
+    back to accept/reject/edit endpoints — formatted `desc::<fqn>`,
+    `doc::<fqn>`, or `pii::<fqn>::<col>` per the Streamlit impl."""
+
+    kind: Literal["description", "pii_tag"]
+    key: str
+    fqn: str
+    column: str | None = None
+    old: str | None = None
+    new: str
+    confidence: float
+    reason: str
+
+
+class ReviewListResponse(BaseModel):
+    rows: list[ReviewItem]
+
+
+class AcceptEditedRequest(BaseModel):
+    """Body for POST /review/{id}/accept-edited. `value` is the user-edited
+    description text or PII tag id — validated against the tag allowlist
+    for pii_tag items."""
+
+    value: str = Field(min_length=1)
+
+
+class ReviewAcceptResponse(BaseModel):
+    """Echoes what was persisted to review_actions so the UI can update its
+    local cache without a refetch round-trip."""
+
+    action_id: int
+    status: Literal["accepted", "rejected", "accepted_edited"]
+    after_val: str

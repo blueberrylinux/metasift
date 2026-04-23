@@ -9,6 +9,7 @@
 import { Route, Routes } from 'react-router-dom';
 
 import { Dashboard } from './screens/Dashboard';
+import { Review } from './screens/Review';
 import { Stew } from './screens/Stew';
 import { StewConversation } from './screens/StewConversation';
 
@@ -18,6 +19,7 @@ export function App() {
       <Route path="/" element={<Dashboard />} />
       <Route path="/chat" element={<Stew />} />
       <Route path="/chat/:conversationId" element={<StewConversation />} />
+      <Route path="/review" element={<Review />} />
     </Routes>
   );
 }

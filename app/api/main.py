@@ -19,7 +19,7 @@ from loguru import logger
 
 from app.api import store
 from app.api.config import api_settings
-from app.api.routers import analysis, chat, health, llm
+from app.api.routers import analysis, chat, health, llm, review
 
 PREFIX = "/api/v1"
 
@@ -61,6 +61,7 @@ app.include_router(health.router, prefix=PREFIX)
 app.include_router(analysis.router, prefix=PREFIX)
 app.include_router(chat.router, prefix=PREFIX)
 app.include_router(llm.router, prefix=PREFIX)
+app.include_router(review.router, prefix=PREFIX)
 
 # Mount the built React bundle in prod (SERVE_STATIC=1 ./web/dist exists).
 # Dev: Vite serves :5173 and proxies /api through to :8000 (see web/vite.config.ts).

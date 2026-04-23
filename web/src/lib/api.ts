@@ -289,3 +289,54 @@ export function getLLMCatalog(): Promise<LLMCatalogResponse> {
 export function setLLMModel(model: string): Promise<ModelConfig> {
   return postJSON<ModelConfig>('/llm/model', { model });
 }
+
+// ── /review ────────────────────────────────────────────────────────────────
+//
+// Pending suggestions from the cleaning + PII scans, plus auto-drafts for
+// undocumented tables. `key` is the opaque id the accept/edit/reject
+// endpoints expect — do not construct it client-side.
+
+export type ReviewKind = 'description' | 'pii_tag';
+
+export interface ReviewItem {
+  kind: ReviewKind;
+  key: string;
+  fqn: string;
+  column: string | null;
+  old: string | null;
+  new: string;
+  confidence: number;
+  reason: string;
+}
+
+export interface ReviewListResponse {
+  rows: ReviewItem[];
+}
+
+export type ReviewActionStatus = 'accepted' | 'rejected' | 'accepted_edited';
+
+export interface ReviewAcceptResponse {
+  action_id: number;
+  status: ReviewActionStatus;
+  after_val: string;
+}
+
+export function listReview(kind?: ReviewKind): Promise<ReviewListResponse> {
+  const qs = kind ? `?kind=${kind}` : '';
+  return getJSON<ReviewListResponse>(`/review${qs}`);
+}
+
+export function acceptReview(itemId: string): Promise<ReviewAcceptResponse> {
+  return postJSON<ReviewAcceptResponse>(`/review/${encodeURIComponent(itemId)}/accept`);
+}
+
+export function acceptEditedReview(itemId: string, value: string): Promise<ReviewAcceptResponse> {
+  return postJSON<ReviewAcceptResponse>(
+    `/review/${encodeURIComponent(itemId)}/accept-edited`,
+    { value },
+  );
+}
+
+export function rejectReview(itemId: string): Promise<ReviewAcceptResponse> {
+  return postJSON<ReviewAcceptResponse>(`/review/${encodeURIComponent(itemId)}/reject`);
+}
