@@ -14,8 +14,10 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 
 import { AppLayout } from '../components/AppLayout';
 import { Composer } from '../components/Composer';
+import { EmptyState } from '../components/EmptyState';
 import { MessageList, type InFlightState } from '../components/MessageList';
 import { PageHeader } from '../components/PageHeader';
+import { Skeleton } from '../components/Skeleton';
 import { ApiError, getConversation, streamChat } from '../lib/api';
 
 interface LocationState {
@@ -131,24 +133,41 @@ export function StewConversation() {
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin px-6 py-6">
           {detail.isLoading ? (
-            <EmptyPlaceholder>Loading conversation…</EmptyPlaceholder>
+            <ConversationSkeleton />
           ) : detail.error instanceof ApiError &&
             detail.error.code === 'conversation_not_found' ? (
-            <EmptyPlaceholder>
-              That conversation doesn't exist.{' '}
-              <Link to="/chat" className="underline">
-                Back to Stew
-              </Link>
-              .
-            </EmptyPlaceholder>
+            <EmptyState
+              icon="◈"
+              title="Conversation not found"
+              body="This conversation was removed, or the URL is wrong."
+              actions={
+                <Link
+                  to="/chat"
+                  className="px-3.5 py-2 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-[12px] transition"
+                >
+                  ← Back to Stew
+                </Link>
+              }
+            />
           ) : detail.error ? (
-            <EmptyPlaceholder>
-              Couldn't load this conversation: {(detail.error as Error).message}
-            </EmptyPlaceholder>
+            <EmptyState
+              variant="error"
+              icon="⚠"
+              title="Couldn't load this conversation"
+              body={(detail.error as Error).message}
+            />
           ) : detail.data && detail.data.messages.length === 0 && !inFlight ? (
-            <EmptyPlaceholder>
-              Fresh conversation. Ask Stew anything about your catalog.
-            </EmptyPlaceholder>
+            <EmptyState
+              icon="✧"
+              title="Fresh conversation"
+              body="Ask Stew anything about your catalog — coverage, PII tags, DQ failures, lineage impact."
+              hint={
+                <>
+                  Try: <em className="not-italic text-slate-400">"what's our documentation coverage?"</em> or{' '}
+                  <em className="not-italic text-slate-400">"auto-document the sales schema"</em>.
+                </>
+              }
+            />
           ) : (
             <MessageList messages={detail.data?.messages ?? []} inFlight={inFlight} />
           )}
@@ -170,10 +189,22 @@ export function StewConversation() {
   );
 }
 
-function EmptyPlaceholder({ children }: { children: React.ReactNode }) {
+// Alternates user + assistant bubble widths to hint at the conversation
+// shape while the history loads.
+function ConversationSkeleton() {
   return (
-    <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-      {children}
+    <div className="space-y-4 max-w-3xl">
+      {[0.55, 0.75, 0.45, 0.7].map((w, i) => {
+        const mine = i % 2 === 0;
+        return (
+          <div key={i} className={mine ? 'flex justify-end' : 'flex justify-start'}>
+            <Skeleton
+              className={(mine ? 'msg-user' : 'msg-stew') + ' h-[54px] rounded-2xl'}
+              style={{ width: `${w * 100}%` }}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

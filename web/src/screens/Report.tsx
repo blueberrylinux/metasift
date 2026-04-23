@@ -14,7 +14,9 @@ import { lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 
 import { AppLayout } from '../components/AppLayout';
+import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { Skeleton } from '../components/Skeleton';
 import { ApiError, getReport } from '../lib/api';
 
 const Markdown = lazy(() => import('../components/ReportMarkdown'));
@@ -86,22 +88,31 @@ export function Report() {
 
       <div className="flex-1 px-6 py-6 max-w-4xl">
         {q.isLoading ? (
-          <Placeholder>Generating report…</Placeholder>
+          <ReportSkeleton />
         ) : q.error instanceof ApiError && q.error.code === 'no_metadata_loaded' ? (
-          <Placeholder>
-            No metadata loaded yet. Hit <strong>Refresh metadata</strong> from the sidebar's
-            Quick actions, or run{' '}
-            <Link to="/chat" className="underline text-emerald-300">
-              Stew
-            </Link>
-            ' auto-refresh.
-          </Placeholder>
+          <EmptyState
+            icon="↻"
+            title="No metadata loaded yet"
+            body="The executive report pulls from every DuckDB surface (coverage, ownership, lineage, DQ). There's nothing to summarise yet."
+            hint={
+              <>
+                Hit Refresh metadata in the sidebar — or ask{' '}
+                <Link to="/chat" className="underline text-emerald-300">
+                  Stew
+                </Link>{' '}
+                to auto-refresh for you.
+              </>
+            }
+          />
         ) : q.error ? (
-          <Placeholder error>
-            Couldn't generate the report: {(q.error as Error).message}
-          </Placeholder>
+          <EmptyState
+            variant="error"
+            icon="⚠"
+            title="Couldn't generate the report"
+            body={(q.error as Error).message}
+          />
         ) : q.data ? (
-          <Suspense fallback={<Placeholder>Rendering markdown…</Placeholder>}>
+          <Suspense fallback={<ReportSkeleton />}>
             <Markdown source={q.data.markdown} />
           </Suspense>
         ) : null}
@@ -110,17 +121,29 @@ export function Report() {
   );
 }
 
-function Placeholder({ children, error }: { children: React.ReactNode; error?: boolean }) {
+// Mimics the report markdown's hierarchy — title, intro paragraph, section
+// header, table of metrics — so Suspense doesn't collapse layout height.
+function ReportSkeleton() {
   return (
-    <div
-      className={
-        'rounded-xl border px-6 py-8 text-sm ' +
-        (error
-          ? 'border-red-500/30 bg-red-500/5 text-red-300 font-mono'
-          : 'border-slate-800 bg-slate-900/40 text-slate-400')
-      }
-    >
-      {children}
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <Skeleton className="h-[24px] w-1/2" />
+        <Skeleton className="h-[14px] w-2/3" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-[14px] w-full" />
+        <Skeleton className="h-[14px] w-11/12" />
+        <Skeleton className="h-[14px] w-10/12" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-[18px] w-40" />
+        <Skeleton className="h-[14px] w-full" />
+        <Skeleton className="h-[14px] w-9/12" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-[18px] w-56" />
+        <Skeleton className="h-[120px] w-full rounded-lg" />
+      </div>
     </div>
   );
 }

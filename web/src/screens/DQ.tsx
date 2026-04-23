@@ -20,7 +20,10 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { AppLayout } from '../components/AppLayout';
+import { CopyableFQN } from '../components/CopyableFQN';
+import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { Skeleton } from '../components/Skeleton';
 import {
   ApiError,
   getDQFailures,
@@ -137,15 +140,21 @@ function FailuresPanel() {
     queryFn: () => getDQFailures(),
   });
 
-  if (q.isLoading) return <Placeholder>Loading failures…</Placeholder>;
+  if (q.isLoading) return <DQCardSkeleton rows={4} />;
   if (q.error instanceof ApiError && q.error.code === 'no_metadata_loaded') {
     return (
-      <Placeholder>
-        No metadata loaded yet. Hit <strong>Refresh metadata</strong> on the dashboard first.
-      </Placeholder>
+      <EmptyState
+        icon="↻"
+        title="No metadata loaded yet"
+        body="DQ failures are sourced from the test cases attached to each OpenMetadata table."
+        hint="Hit Refresh metadata in the sidebar, then return to this tab."
+      />
     );
   }
-  if (q.error) return <Placeholder error>{(q.error as Error).message}</Placeholder>;
+  if (q.error)
+    return (
+      <EmptyState variant="error" icon="⚠" title="Couldn't load failures" body={(q.error as Error).message} />
+    );
   if (!q.data) return null;
 
   const schemas = uniqueSchemas(q.data.rows);
@@ -182,11 +191,27 @@ function FailuresPanel() {
       )}
 
       {q.data.rows.length === 0 ? (
-        <Placeholder>
-          {q.data.summary.total === 0
-            ? 'No DQ tests exist on this catalog yet. Seed or ingest some test cases and retry.'
-            : 'No failing DQ tests. Everything looks clean.'}
-        </Placeholder>
+        q.data.summary.total === 0 ? (
+          <EmptyState
+            icon="🧪"
+            title="No DQ tests on this catalog"
+            body="There are no test cases in OpenMetadata to evaluate yet."
+            hint={
+              <>
+                Seed the demo catalog with{' '}
+                <code className="font-mono text-accent-soft">make seed</code>, or ingest real
+                test cases from your data stack.
+              </>
+            }
+          />
+        ) : (
+          <EmptyState
+            icon="✓"
+            title="No failing DQ tests"
+            body="Everything looks clean — all tests are currently passing."
+            hint="Run the Recommend DQ scan to surface gaps where tests should exist."
+          />
+        )
       ) : (
         <div className="flex flex-col gap-3">
           {q.data.rows
@@ -210,11 +235,21 @@ function FailureCard({ f }: { f: DQFailure }) {
             <span className="font-semibold">{f.test_name}</span>
             {f.explanation && <FixTypeChip value={f.explanation.fix_type} />}
           </div>
-          <code className="text-xs font-mono text-ink-dim block mt-0.5 break-all">
-            {f.table_fqn}
-            {f.column_name && ` · column ${f.column_name}`}
-            {f.test_definition_name && ` · ${f.test_definition_name}`}
-          </code>
+          <div className="mt-0.5">
+            <CopyableFQN
+              fqn={f.table_fqn}
+              variant="full"
+              className="text-xs font-mono text-ink-dim"
+              columnSuffix={
+                [
+                  f.column_name ? `· column ${f.column_name}` : null,
+                  f.test_definition_name ? `· ${f.test_definition_name}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
+            />
+          </div>
         </div>
         {f.explanation && (
           <button
@@ -354,20 +389,30 @@ function RecommendationsPanel() {
     queryFn: () => getDQRecommendations(severity ?? undefined),
   });
 
-  if (q.isLoading) return <Placeholder>Loading recommendations…</Placeholder>;
+  if (q.isLoading) return <DQCardSkeleton rows={3} />;
   if (q.error instanceof ApiError && q.error.code === 'no_metadata_loaded') {
-    return <Placeholder>No metadata loaded yet.</Placeholder>;
+    return (
+      <EmptyState
+        icon="↻"
+        title="No metadata loaded yet"
+        body="Hit Refresh metadata in the sidebar to pull catalog state first."
+      />
+    );
   }
-  if (q.error) return <Placeholder error>{(q.error as Error).message}</Placeholder>;
+  if (q.error)
+    return (
+      <EmptyState variant="error" icon="⚠" title="Couldn't load recommendations" body={(q.error as Error).message} />
+    );
   if (!q.data) return null;
 
   if (!q.data.scan_run) {
     return (
-      <Placeholder>
-        Recommendations haven't been generated yet. Click{' '}
-        <strong>💡 Recommend DQ</strong> in the sidebar — one LLM call per table, ~30s on the
-        demo catalog.
-      </Placeholder>
+      <EmptyState
+        icon="💡"
+        title="Recommendations not generated yet"
+        body="MetaSift analyses each table's columns + tags + existing tests to suggest the DQ tests that should exist."
+        hint="Click Recommend DQ tests in the sidebar — one LLM call per table, ~30s on the demo catalog."
+      />
     );
   }
 
@@ -388,10 +433,12 @@ function RecommendationsPanel() {
       </div>
 
       {q.data.rows.length === 0 ? (
-        <Placeholder>
-          Nothing recommended for this severity. Try another filter, or run{' '}
-          <strong>💡 Recommend DQ</strong> again after updating the catalog.
-        </Placeholder>
+        <EmptyState
+          icon="⌕"
+          title="Nothing at this severity"
+          body="No recommendations match the selected filter."
+          hint="Try another severity chip, or re-run Recommend DQ after updating the catalog."
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {q.data.rows.map((r, i) => (
@@ -410,10 +457,12 @@ function RecommendationCard({ r }: { r: DQRecommendation }) {
         <SeverityChip value={r.severity} />
         <span className="font-mono text-accent-soft">{r.test_definition}</span>
       </div>
-      <code className="text-xs font-mono text-ink-dim break-all">
-        {r.table_fqn}
-        {r.column_name && ` · column ${r.column_name}`}
-      </code>
+      <CopyableFQN
+        fqn={r.table_fqn}
+        variant="full"
+        className="text-xs font-mono text-ink-dim"
+        columnSuffix={r.column_name ? `· column ${r.column_name}` : undefined}
+      />
       {r.rationale && <p className="text-sm text-ink-text">{r.rationale}</p>}
       {r.parameters.length > 0 && (
         <details className="mt-1">
@@ -437,17 +486,33 @@ function RiskPanel() {
     queryFn: () => getDQRisk(20),
   });
 
-  if (q.isLoading) return <Placeholder>Loading risk ranking…</Placeholder>;
+  if (q.isLoading) return <DQRiskSkeleton rows={6} />;
   if (q.error instanceof ApiError && q.error.code === 'no_metadata_loaded') {
-    return <Placeholder>No metadata loaded yet.</Placeholder>;
+    return (
+      <EmptyState
+        icon="↻"
+        title="No metadata loaded yet"
+        body="Risk ranking joins failing tests with lineage depth. Pull the catalog first."
+      />
+    );
   }
-  if (q.error) return <Placeholder error>{(q.error as Error).message}</Placeholder>;
+  if (q.error)
+    return (
+      <EmptyState variant="error" icon="⚠" title="Couldn't load risk ranking" body={(q.error as Error).message} />
+    );
   if (!q.data || q.data.rows.length === 0) {
     return (
-      <Placeholder>
-        No failing DQ tests. Risk ranking is empty when the catalog is clean — or seed the demo
-        test cases with <code className="font-mono text-accent-soft">make seed</code>.
-      </Placeholder>
+      <EmptyState
+        icon="🎯"
+        title="Risk ranking is empty"
+        body="No failing DQ tests means nothing is at risk today — clean catalog."
+        hint={
+          <>
+            Want to see it populated? Seed demo test cases with{' '}
+            <code className="font-mono text-accent-soft">make seed</code>.
+          </>
+        }
+      />
     );
   }
 
@@ -462,14 +527,29 @@ function RiskPanel() {
 
 function RiskRow({ r }: { r: DQRiskRow }) {
   const [open, setOpen] = useState(false);
+  // Row is a div (not a button) so the nested CopyableFQN button is valid
+  // HTML. Expand/collapse is wired via role="button" + Enter/Space.
   return (
     <div className="rounded-lg border border-ink-border bg-ink-panel/40 overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="w-full text-left px-4 py-3 hover:bg-ink-panel/60 flex items-center justify-between gap-3"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setOpen((v) => !v);
+          }
+        }}
+        className="w-full text-left px-4 py-3 hover:bg-ink-panel/60 flex items-center justify-between gap-3 cursor-pointer focus:outline-none focus:bg-ink-panel/60"
       >
         <div className="flex-1 min-w-0">
-          <code className="text-sm font-mono text-ink-text break-all">{r.fqn}</code>
+          <CopyableFQN
+            fqn={r.fqn}
+            variant="full"
+            className="text-sm font-mono text-ink-text"
+          />
           <div className="flex gap-3 text-mini font-mono text-ink-dim mt-0.5">
             <span>
               failed: <span className="text-error-soft">{r.failed_tests}</span>
@@ -485,7 +565,7 @@ function RiskRow({ r }: { r: DQRiskRow }) {
           <div className="text-lg font-semibold text-accent-bright font-mono">{r.risk_score}</div>
           <span className="text-xs text-ink-dim">{open ? '▾' : '▸'}</span>
         </div>
-      </button>
+      </div>
       {open && <ImpactDrilldown fqn={r.fqn} />}
     </div>
   );
@@ -531,9 +611,16 @@ function ImpactBody({ d }: { d: DQImpactResponse }) {
           <div className="font-mono text-ink-dim uppercase tracking-wider text-mini mb-0.5">
             Downstream impact ({d.downstream_fqns.length} tables)
           </div>
-          <ul className="list-disc list-inside font-mono text-ink-text break-all">
+          <ul className="font-mono text-ink-text break-all space-y-0.5">
             {d.downstream_fqns.map((n) => (
-              <li key={n}>{n}</li>
+              <li key={n} className="flex items-center gap-1.5">
+                <span className="text-ink-dim" aria-hidden>·</span>
+                <CopyableFQN
+                  fqn={n}
+                  variant="full"
+                  className="font-mono text-xs text-ink-text"
+                />
+              </li>
             ))}
           </ul>
         </div>
@@ -617,17 +704,45 @@ function chipCls(active: boolean): string {
   );
 }
 
-function Placeholder({ children, error }: { children: React.ReactNode; error?: boolean }) {
+// Card-shaped skeleton — one block per row, dimensioned to match the real
+// FailureCard / RecommendationCard so the layout stays quiet on resolve.
+function DQCardSkeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div
-      className={
-        'rounded-xl border px-6 py-8 text-sm ' +
-        (error
-          ? 'border-error/30 bg-error/5 text-error-soft font-mono'
-          : 'border-ink-border bg-ink-panel/40 text-ink-soft')
-      }
-    >
-      {children}
+    <div className="flex flex-col gap-3">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-xl border border-ink-border bg-ink-panel/40 p-5 flex flex-col gap-2"
+        >
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-[16px] w-40 rounded" />
+            <Skeleton className="h-[18px] w-28 rounded-md" />
+          </div>
+          <Skeleton className="h-[12px] w-3/4 rounded" />
+          <Skeleton className="h-[12px] w-full rounded" />
+          <Skeleton className="h-[12px] w-5/6 rounded" />
+        </div>
+      ))}
     </div>
   );
 }
+
+function DQRiskSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-lg border border-ink-border bg-ink-panel/40 px-4 py-3 flex items-center justify-between gap-3"
+        >
+          <div className="flex-1 min-w-0 space-y-1.5">
+            <Skeleton className="h-[14px] w-1/2 rounded" />
+            <Skeleton className="h-[10px] w-2/3 rounded" />
+          </div>
+          <Skeleton className="h-[22px] w-10 rounded" />
+        </div>
+      ))}
+    </div>
+  );
+}
+

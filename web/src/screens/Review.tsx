@@ -13,10 +13,14 @@
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 
 import { AppLayout } from '../components/AppLayout';
+import { CopyableFQN, shortFQN } from '../components/CopyableFQN';
+import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { Skeleton } from '../components/Skeleton';
 import {
   acceptEditedReview,
   acceptReview,
@@ -68,6 +72,53 @@ export function Review() {
 
   const bulkPending = visible.length;
 
+  // j/k navigation over the visible list. Skipped while the user is typing
+  // (so inline edits don't get hijacked) and wraps at both ends so the user
+  // can keep holding j without hitting a dead zone.
+  const moveSelection = useCallback(
+    (delta: 1 | -1) => {
+      if (visible.length === 0) return;
+      const currentIdx = selected ? visible.findIndex((r) => r.key === selected.key) : -1;
+      const nextIdx =
+        currentIdx === -1
+          ? 0
+          : (currentIdx + delta + visible.length) % visible.length;
+      setSelectedKey(visible[nextIdx].key);
+    },
+    [visible, selected],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'j' && e.key !== 'k') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target?.isContentEditable
+      )
+        return;
+      e.preventDefault();
+      moveSelection(e.key === 'j' ? 1 : -1);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [moveSelection]);
+
+  // Keep the selected row in view when j/k scrolls past the viewport edge.
+  // Querying by data-attribute is simpler than threading refs through every
+  // row — there's only ever one selected row so the lookup is cheap.
+  useEffect(() => {
+    if (!selected) return;
+    const el = document.querySelector<HTMLElement>(
+      `[data-review-key="${CSS.escape(selected.key)}"]`,
+    );
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selected?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <AppLayout activeKey="review">
       <PageHeader
@@ -81,18 +132,45 @@ export function Review() {
       />
 
       {q.isLoading ? (
-        <Empty>Loading queue…</Empty>
+        <ReviewSkeleton />
       ) : q.error instanceof ApiError && q.error.code === 'no_metadata_loaded' ? (
-        <Empty>
-          No metadata loaded yet. Hit <strong>Refresh metadata</strong> in the sidebar first.
-        </Empty>
+        <div className="p-8">
+          <EmptyState
+            icon="↻"
+            title="No metadata loaded yet"
+            body={
+              <>
+                The review queue is populated from a refreshed catalog. Hit{' '}
+                <strong>Refresh metadata</strong> in the sidebar to pull from OpenMetadata.
+              </>
+            }
+            hint="Once the refresh finishes, run Deep scan or PII scan to generate suggestions."
+          />
+        </div>
       ) : q.error ? (
-        <Empty error>Couldn't load queue: {(q.error as Error).message}</Empty>
+        <div className="p-8">
+          <EmptyState
+            variant="error"
+            icon="⚠"
+            title="Couldn't load queue"
+            body={(q.error as Error).message}
+          />
+        </div>
       ) : (q.data?.rows.length ?? 0) === 0 ? (
-        <Empty>
-          No pending suggestions. Run <strong>Deep scan</strong> or <strong>PII scan</strong>{' '}
-          from the sidebar to populate the queue.
-        </Empty>
+        <div className="p-8">
+          <EmptyState
+            icon="✓"
+            title="No pending suggestions"
+            body="The catalog is clean — or no scans have run yet."
+            hint={
+              <>
+                Run <strong className="text-slate-300">Deep scan</strong> (descriptions) or{' '}
+                <strong className="text-slate-300">PII scan</strong> (tags) from the sidebar to
+                populate the queue.
+              </>
+            }
+          />
+        </div>
       ) : (
         <>
           {/* Filter row */}
@@ -116,7 +194,14 @@ export function Review() {
               onClick={() => setFilter('pii_tag')}
             />
             <div className="flex-1" />
-            <div className="text-[10px] text-slate-500 font-mono">sorted: confidence ↓</div>
+            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+              <span className="flex items-center gap-1">
+                <kbd>j</kbd>
+                <kbd>k</kbd>
+                <span>navigate</span>
+              </span>
+              <span>sorted: confidence ↓</span>
+            </div>
           </div>
 
           {/* Split: list + diff */}
@@ -132,7 +217,15 @@ export function Review() {
                 />
               ))}
               {visible.length === 0 && (
-                <div className="p-6 text-[12px] text-slate-500">Nothing matches this filter.</div>
+                <div className="p-4">
+                  <EmptyState
+                    compact
+                    icon="⌕"
+                    title="No matches"
+                    body="Nothing in the queue matches this filter."
+                    hint="Try a different filter chip above."
+                  />
+                </div>
               )}
             </div>
             <div className="flex-1 overflow-y-auto scrollbar-thin bg-slate-950/40 min-w-0">
@@ -146,22 +239,36 @@ export function Review() {
                     // 502 PATCH_FAILED from the user.
                     await acceptReview(selected.key);
                     markActed(selected.key, 'accepted');
+                    toast.success('Accepted · PATCH dispatched', {
+                      description: shortFQN(selected.fqn),
+                    });
                     invalidate();
                   }}
                   onAcceptEdited={async (value: string) => {
                     await acceptEditedReview(selected.key, value);
                     markActed(selected.key, 'accepted_edited');
+                    toast.success('Saved & applied', {
+                      description: shortFQN(selected.fqn),
+                    });
                     invalidate();
                   }}
                   onReject={async () => {
                     await rejectReview(selected.key);
                     markActed(selected.key, 'rejected');
+                    toast('Rejected', {
+                      description: shortFQN(selected.fqn),
+                    });
                     invalidate();
                   }}
                 />
               ) : (
-                <div className="p-8 text-[13px] text-slate-500">
-                  Select a suggestion on the left to review.
+                <div className="p-8">
+                  <EmptyState
+                    compact
+                    icon="◀"
+                    title="Pick a suggestion"
+                    body="Select a row on the left to see the before/after diff and rationale."
+                  />
                 </div>
               )}
             </div>
@@ -214,12 +321,24 @@ function ReviewListRow({
   onSelect: () => void;
 }) {
   const sev = severityOf(item);
+  // Using role="button" on a div (not a <button>) because the row contains
+  // a nested CopyableFQN button — button-in-button is invalid HTML and
+  // Safari drops the inner click.
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
+      data-review-key={item.key}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      aria-pressed={selected}
       className={
-        'rq-row w-full text-left px-5 py-3 border-b border-slate-800/60 transition ' +
+        'rq-row w-full text-left px-5 py-3 border-b border-slate-800/60 transition cursor-pointer focus:outline-none focus:bg-slate-900/60 ' +
         (selected
           ? 'bg-emerald-500/5 border-l-2 border-l-emerald-400'
           : 'border-l-2 border-l-transparent')
@@ -236,9 +355,13 @@ function ReviewListRow({
               {kindLabel(item)}
             </span>
           </div>
-          <div className="text-[12px] font-mono text-slate-200 truncate">
-            {shortFQN(item.fqn)}
-            {item.column && <span className="text-slate-500"> · {item.column}</span>}
+          <div className="truncate">
+            <CopyableFQN
+              fqn={item.fqn}
+              variant="short"
+              columnSuffix={item.column ? `· ${item.column}` : undefined}
+              className="font-mono text-[12px] text-slate-200"
+            />
           </div>
           <div className="text-[11px] text-slate-500 truncate">{authorOf(item)}</div>
           <div className="flex items-center gap-3 mt-1.5">
@@ -268,7 +391,7 @@ function ReviewListRow({
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -333,7 +456,11 @@ function DiffPanel({
             </span>
             <SeverityPill sev={sev} />
           </div>
-          <div className="font-mono text-[15px] text-white break-all">{item.fqn}</div>
+          <CopyableFQN
+            fqn={item.fqn}
+            variant="full"
+            className="font-mono text-[15px] text-white"
+          />
           <div className="text-[12px] text-slate-500 mt-1">
             Field:{' '}
             <span className="font-mono text-slate-300">
@@ -541,12 +668,6 @@ function authorOf(item: ReviewItem): string {
   return 'Cleaning engine · stale rewrite';
 }
 
-function shortFQN(fqn: string): string {
-  const parts = fqn.split('.');
-  if (parts.length <= 2) return fqn;
-  return parts.slice(-3).join('.');
-}
-
 function countByKind(rows: ReviewItem[]): { all: number; description: number; pii_tag: number } {
   // Count explicitly — an else-branch would silently attribute any new kind
   // the backend introduces (e.g. `naming`) to pii_tag, inflating that chip.
@@ -559,19 +680,40 @@ function countByKind(rows: ReviewItem[]): { all: number; description: number; pi
   return { all: rows.length, description: desc, pii_tag: pii };
 }
 
-function Empty({ children, error }: { children: React.ReactNode; error?: boolean }) {
+// List-shaped skeleton that mirrors ReviewListRow geometry: 28px kind badge,
+// severity pill + kind label row, FQN line, author line, confidence bar.
+// Tuning the dimensions to the real row means layout doesn't jump when the
+// query resolves.
+function ReviewSkeleton() {
   return (
-    <div className="flex-1 p-8">
-      <div
-        className={
-          'rounded-xl border px-6 py-8 text-sm ' +
-          (error
-            ? 'border-red-500/30 bg-red-500/5 text-red-300 font-mono'
-            : 'border-slate-800 bg-slate-900/40 text-slate-400')
-        }
-      >
-        {children}
+    <div className="flex-1 flex overflow-hidden min-h-0">
+      <div className="w-[420px] shrink-0 border-r border-slate-800/80 overflow-hidden">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} className="px-5 py-3 border-b border-slate-800/60 flex items-start gap-2">
+            <Skeleton className="h-7 w-7 shrink-0 rounded-md" />
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-[14px] w-12 rounded" />
+                <Skeleton className="h-[10px] w-16 rounded" />
+              </div>
+              <Skeleton className="h-[14px] w-3/4 rounded" />
+              <Skeleton className="h-[10px] w-1/2 rounded" />
+              <Skeleton className="h-[6px] w-24 rounded-full" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex-1 bg-slate-950/40 p-6 space-y-4">
+        <Skeleton className="h-[18px] w-48 rounded" />
+        <Skeleton className="h-[14px] w-64 rounded" />
+        <Skeleton className="h-[220px] w-full rounded-xl" />
+        <div className="flex gap-2">
+          <Skeleton className="h-[34px] w-32 rounded-md" />
+          <Skeleton className="h-[34px] w-20 rounded-md" />
+          <Skeleton className="h-[34px] w-20 rounded-md" />
+        </div>
       </div>
     </div>
   );
 }
+

@@ -14,6 +14,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 
 import {
   type BulkDocBody,
@@ -29,6 +30,7 @@ import {
 import { MetricMini, type Tone } from './MetricMini';
 import { NavIcon, type NavIconKind } from './NavIcon';
 import { ScoreRing } from './ScoreRing';
+import { Skeleton, SkeletonRing } from './Skeleton';
 
 export type NavKey = 'chat' | 'review' | 'viz' | 'dq' | 'report' | 'llm';
 
@@ -82,7 +84,11 @@ export function Sidebar({ activeKey }: { activeKey: NavKey }) {
 
   return (
     <aside className="w-[280px] shrink-0 border-r border-slate-800/80 bg-slate-950/60 flex flex-col h-[calc(100vh-3.5rem)] sticky top-14">
-      <HealthHero composite={composite.data} />
+      {composite.isLoading ? (
+        <HealthHeroSkeleton />
+      ) : (
+        <HealthHero composite={composite.data} />
+      )}
       <nav className="flex-1 px-3 py-4 overflow-y-auto scrollbar-thin">
         <SectionLabel>Workspace</SectionLabel>
         <div className="space-y-1">
@@ -190,6 +196,35 @@ function HealthHero({ composite }: { composite?: CompositeScore }) {
   );
 }
 
+function HealthHeroSkeleton() {
+  return (
+    <div className="px-5 pt-5 pb-5 border-b border-slate-800/80">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          Catalog health
+        </div>
+        <Skeleton className="h-[18px] w-10" />
+      </div>
+      <div className="flex flex-col items-center">
+        <SkeletonRing size={124} />
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-3 mt-5">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+            <Skeleton className="h-[10px] w-14 mb-2" />
+            <Skeleton className="h-[18px] w-12 mb-1.5" />
+            <Skeleton className="h-[9px] w-16" />
+          </div>
+        ))}
+      </div>
+      <div className="mt-5">
+        <Skeleton className="h-[10px] w-16 mb-1.5" />
+        <Skeleton className="h-1.5 w-full rounded-full" />
+      </div>
+    </div>
+  );
+}
+
 function pct(v: number | undefined): string {
   if (v == null || Number.isNaN(v)) return '—';
   return `${v.toFixed(1)}%`;
@@ -285,8 +320,12 @@ function QuickAction({
               };
             }
             if (frame.type === 'done') {
+              toast.success(`${label} done`, {
+                description: summariseCounts(kind, frame.counts),
+              });
               return { ...prev, running: false };
             }
+            toast.error(`${label} failed`, { description: frame.message });
             return { ...prev, running: false, err: frame.message };
           });
         },
@@ -302,7 +341,9 @@ function QuickAction({
       qc.invalidateQueries({ queryKey: ['scan-status'] });
     },
     onError: (e) => {
-      setState({ ...INITIAL_STATE, err: e instanceof Error ? e.message : String(e) });
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`${label} failed`, { description: msg });
+      setState({ ...INITIAL_STATE, err: msg });
     },
   });
 
@@ -380,5 +421,71 @@ function Dot({ on }: { on: boolean }) {
       }
     />
   );
+}
+
+// Shape a one-line summary for the toast description, tailored per scan so
+// the user sees the metric that actually matters for that kind (tables for
+// refresh, explanations for dq_explain, etc.) instead of a generic count dump.
+// Keys mirror what the engines return — see cleaning.run_pii_scan,
+// stewardship.run_dq_recommendations, duck.refresh_all, etc.
+function summariseCounts(kind: ScanKind, counts: Record<string, unknown>): string {
+  const n = (k: string): number | null => {
+    const v = counts[k];
+    if (typeof v === 'number') return v;
+    if (typeof v === 'string') {
+      const parsed = Number(v);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+  switch (kind) {
+    case 'refresh': {
+      const t = n('om_tables');
+      const c = n('om_columns');
+      if (t != null && c != null) return `${t} tables · ${c} columns`;
+      return 'metadata refreshed';
+    }
+    case 'deep_scan': {
+      const analyzed = n('analyzed');
+      const acc = n('accuracy_pct');
+      const qual = n('quality_avg_1_5');
+      if (analyzed != null && acc != null && qual != null) {
+        return `${analyzed} scanned · acc ${acc.toFixed(0)}% · qual ${qual.toFixed(1)}/5`;
+      }
+      return 'deep scan complete';
+    }
+    case 'pii_scan': {
+      const scanned = n('scanned');
+      const sensitive = n('sensitive');
+      const gaps = n('gaps');
+      if (scanned != null) {
+        return `${scanned} columns · ${sensitive ?? 0} sensitive · ${gaps ?? 0} gaps`;
+      }
+      return 'PII scan complete';
+    }
+    case 'dq_explain': {
+      const expl = n('explained');
+      const total = n('total');
+      if (expl != null && total != null) return `${expl}/${total} failures explained`;
+      if (expl != null) return `${expl} explanations`;
+      return 'DQ failures explained';
+    }
+    case 'dq_recommend': {
+      const total = n('total');
+      const crit = n('critical');
+      if (total != null) {
+        return `${total} recommendations${crit ? ` · ${crit} critical` : ''}`;
+      }
+      return 'DQ recommendations ready';
+    }
+    case 'bulk_doc': {
+      const drafted = n('drafted');
+      const total = n('total');
+      if (drafted != null && total != null) return `${drafted}/${total} tables documented`;
+      return 'auto-doc complete';
+    }
+    default:
+      return '';
+  }
 }
 

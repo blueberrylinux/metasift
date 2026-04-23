@@ -13,8 +13,10 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { AppLayout } from '../components/AppLayout';
+import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { PlotTab } from '../components/PlotTab';
+import { Skeleton } from '../components/Skeleton';
 import { ApiError, listVizTabs } from '../lib/api';
 
 export function Viz() {
@@ -48,13 +50,21 @@ export function Viz() {
 
       <div className="flex-1 px-6 py-6 max-w-6xl">
         {tabs.isLoading ? (
-          <Placeholder>Loading tabs…</Placeholder>
+          <VizTabsSkeleton />
         ) : tabs.error instanceof ApiError ? (
-          <Placeholder error>
-            {tabs.error.code}: {tabs.error.message}
-          </Placeholder>
+          <EmptyState
+            variant="error"
+            icon="⚠"
+            title={tabs.error.code}
+            body={tabs.error.message}
+          />
         ) : tabs.error ? (
-          <Placeholder error>Couldn't load tabs: {(tabs.error as Error).message}</Placeholder>
+          <EmptyState
+            variant="error"
+            icon="⚠"
+            title="Couldn't load tabs"
+            body={(tabs.error as Error).message}
+          />
         ) : (
           <>
             <div
@@ -87,7 +97,12 @@ export function Viz() {
                 <PlotTab slug={activeTab.slug} caption={activeTab.caption} />
               </div>
             ) : (
-              <Placeholder>No viz tabs registered.</Placeholder>
+              <EmptyState
+                icon="📊"
+                title="No viz tabs registered"
+                body="The visualization engine's ALL_VIZ list is empty."
+                hint="Check app/engines/viz.py — each tab is a function exposed on ALL_VIZ."
+              />
             )}
           </>
         )}
@@ -96,17 +111,17 @@ export function Viz() {
   );
 }
 
-function Placeholder({ children, error }: { children: React.ReactNode; error?: boolean }) {
+// Mirrors the tab strip + chart frame so the layout stays stable while the
+// static tab list resolves.
+function VizTabsSkeleton() {
   return (
-    <div
-      className={
-        'rounded-xl border px-6 py-8 text-sm ' +
-        (error
-          ? 'border-red-500/30 bg-red-500/5 text-red-300 font-mono'
-          : 'border-slate-800 bg-slate-900/40 text-slate-400')
-      }
-    >
-      {children}
+    <div>
+      <div className="flex flex-wrap gap-1 mb-6 border-b border-slate-800/80 pb-3">
+        {Array.from({ length: 9 }).map((_, i) => (
+          <Skeleton key={i} className="h-[28px] w-28 rounded-md" />
+        ))}
+      </div>
+      <Skeleton className="h-[360px] w-full rounded-xl" />
     </div>
   );
 }

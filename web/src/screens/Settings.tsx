@@ -13,7 +13,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { AppLayout } from '../components/AppLayout';
+import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { Skeleton } from '../components/Skeleton';
 import {
   ApiError,
   getLLMCatalog,
@@ -319,9 +321,15 @@ export function Settings() {
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-8">
         {configQ.isLoading ? (
-          <Panel>Loading config…</Panel>
+          <SettingsSkeleton />
         ) : configQ.error ? (
-          <Panel error>Couldn't load config: {(configQ.error as Error).message}</Panel>
+          <EmptyState
+            variant="error"
+            icon="⚠"
+            title="Couldn't load LLM config"
+            body={(configQ.error as Error).message}
+            hint="Check that the API is reachable on /api/v1/config/llm."
+          />
         ) : (
           <>
             <DefaultsBanner applied={defaultsApplied} onApply={applyMetasiftDefaults} />
@@ -765,6 +773,28 @@ function Panel({ children, error }: { children: React.ReactNode; error?: boolean
       }
     >
       {children}
+    </div>
+  );
+}
+
+// Settings is dense enough that a single skeleton block would feel wrong —
+// mirror the provider-panel + routing-grid split so first-paint matches
+// the resolved layout.
+function SettingsSkeleton() {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-1 space-y-3">
+        <Skeleton className="h-[16px] w-40" />
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-[58px] w-full rounded-lg" />
+        ))}
+      </div>
+      <div className="lg:col-span-2 space-y-3">
+        <Skeleton className="h-[16px] w-48" />
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-[46px] w-full rounded-lg" />
+        ))}
+      </div>
     </div>
   );
 }
