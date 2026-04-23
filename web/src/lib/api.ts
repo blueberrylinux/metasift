@@ -68,3 +68,49 @@ export interface HealthResponse {
 export function getHealth(): Promise<HealthResponse> {
   return getJSON<HealthResponse>('/health');
 }
+
+// ── /analysis ──────────────────────────────────────────────────────────────
+//
+// Composite score drives the dashboard hero donut. `scanned` is false until
+// the deep-scan has run — the UI should render accuracy/quality as em-dashes
+// in that state rather than "0%". All four sub-metrics are 0-100 floats.
+
+export interface CompositeScore {
+  coverage: number;
+  accuracy: number;
+  consistency: number;
+  quality: number;
+  composite: number;
+  scanned: boolean;
+}
+
+export interface CoverageRow {
+  database: string;
+  schema: string;
+  total: number;
+  documented: number;
+  coverage_pct: number;
+}
+
+export interface CoverageResponse {
+  rows: CoverageRow[];
+}
+
+export interface RefreshResponse {
+  run_id: number;
+  counts: Record<string, number>;
+  duration_ms: number;
+}
+
+export function getComposite(): Promise<CompositeScore> {
+  return getJSON<CompositeScore>('/analysis/composite');
+}
+
+export function getCoverage(schema?: string): Promise<CoverageResponse> {
+  const qs = schema ? `?schema=${encodeURIComponent(schema)}` : '';
+  return getJSON<CoverageResponse>(`/analysis/coverage${qs}`);
+}
+
+export function postRefresh(): Promise<RefreshResponse> {
+  return postJSON<RefreshResponse>('/analysis/refresh');
+}
