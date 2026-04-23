@@ -242,3 +242,28 @@ class ScanStatusResponse(BaseModel):
     stable scan-kind identifiers the SSE endpoints start scans under."""
 
     kinds: dict[str, ScanRun | None]
+
+
+# ── /viz ──────────────────────────────────────────────────────────────────
+
+
+class VizTabMeta(BaseModel):
+    """One tab's metadata — slug is the URL-safe identifier; label carries
+    the emoji-prefixed display string from Streamlit's `st.tabs` row;
+    caption is the one-liner under it."""
+
+    slug: str
+    label: str
+    caption: str
+
+
+class VizListResponse(BaseModel):
+    tabs: list[VizTabMeta]
+
+
+class VizFigureResponse(BaseModel):
+    """`figure` is the Plotly JSON dict from `fig.to_dict()` (data + layout
+    + frames). `None` when the builder had no data — the UI renders an
+    empty-state hint pointing at the sidebar scan that would populate it."""
+
+    figure: dict[str, Any] | None

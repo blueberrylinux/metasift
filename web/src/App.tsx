@@ -12,6 +12,7 @@ import { Dashboard } from './screens/Dashboard';
 import { Review } from './screens/Review';
 import { Stew } from './screens/Stew';
 import { StewConversation } from './screens/StewConversation';
+import { Viz } from './screens/Viz';
 
 export function App() {
   return (
@@ -20,6 +21,7 @@ export function App() {
       <Route path="/chat" element={<Stew />} />
       <Route path="/chat/:conversationId" element={<StewConversation />} />
       <Route path="/review" element={<Review />} />
+      <Route path="/viz" element={<Viz />} />
     </Routes>
   );
 }

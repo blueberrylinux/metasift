@@ -17,13 +17,15 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
-    // Keep the Plotly chunk separate — loaded lazily by the viz route only.
+    // Plotly.js is ~3 MB gzipped — chunk it out so the /viz route lazy-loads
+    // it instead of dragging it into the main bundle that every screen pays for.
     rollupOptions: {
       output: {
         manualChunks: {
-          // populated in Phase 5 when we add react-plotly.js
+          plotly: ['plotly.js-dist-min', 'react-plotly.js/factory'],
         },
       },
     },
+    chunkSizeWarningLimit: 4000,
   },
 });

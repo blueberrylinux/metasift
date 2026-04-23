@@ -412,6 +412,38 @@ function parseSSEBlockScan(block: string): ScanFrame | null {
   }
 }
 
+// ── /viz ───────────────────────────────────────────────────────────────────
+//
+// Each /viz/{slug} returns a Plotly figure JSON (data + layout + frames) or
+// {figure: null} when the builder had no data. React hands the non-null
+// payload straight to <Plot data={fig.data} layout={fig.layout} />.
+
+export interface VizTabMeta {
+  slug: string;
+  label: string;
+  caption: string;
+}
+
+export interface VizListResponse {
+  tabs: VizTabMeta[];
+}
+
+export interface VizFigureResponse {
+  figure: {
+    data: unknown[];
+    layout: Record<string, unknown>;
+    frames?: unknown[];
+  } | null;
+}
+
+export function listVizTabs(): Promise<VizListResponse> {
+  return getJSON<VizListResponse>('/viz');
+}
+
+export function getVizFigure(slug: string): Promise<VizFigureResponse> {
+  return getJSON<VizFigureResponse>(`/viz/${encodeURIComponent(slug)}`);
+}
+
 export async function streamScan(
   kind: ScanKind,
   onFrame: (frame: ScanFrame) => void,
