@@ -266,3 +266,26 @@ export async function streamChat(
     }
   }
 }
+
+// ── /llm ───────────────────────────────────────────────────────────────────
+//
+// Slice-4 scope: the dropdown only picks a shared model. api_key / base_url
+// / per-task routing land in a later phase alongside a richer settings UI.
+
+export interface LLMCatalogResponse {
+  models: string[];
+  current: string;
+  source: 'openrouter' | 'fallback';
+}
+
+export interface ModelConfig {
+  model: string;
+}
+
+export function getLLMCatalog(): Promise<LLMCatalogResponse> {
+  return getJSON<LLMCatalogResponse>('/llm/catalog');
+}
+
+export function setLLMModel(model: string): Promise<ModelConfig> {
+  return postJSON<ModelConfig>('/llm/model', { model });
+}

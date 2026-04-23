@@ -14,6 +14,7 @@ import { Link, useParams } from 'react-router-dom';
 
 import { Composer } from '../components/Composer';
 import { MessageList, type InFlightState } from '../components/MessageList';
+import { ModelQuickPicker } from '../components/ModelQuickPicker';
 import { Sidebar } from '../components/Sidebar';
 import { ApiError, getConversation, streamChat } from '../lib/api';
 
@@ -135,6 +136,7 @@ export function StewConversation() {
 
         <footer className="border-t border-ink-border px-10 py-4 bg-ink-panel/30">
           <Composer onSend={onSend} disabled={send.isPending} />
+          <ModelQuickPicker />
           {send.error instanceof ApiError ? (
             <div className="mt-2 text-xs font-mono text-error-soft">
               {send.error.code}: {send.error.message}

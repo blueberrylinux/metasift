@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -125,3 +125,40 @@ class PersistedMessage(BaseModel):
 class ConversationDetailResponse(BaseModel):
     conversation: ConversationSummary
     messages: list[PersistedMessage]
+
+
+# ── /llm ──────────────────────────────────────────────────────────────────
+
+
+class LLMCatalogResponse(BaseModel):
+    """Full OpenRouter catalog + the current selection. `source` is
+    `"openrouter"` when the dynamic fetch succeeded, `"fallback"` when we're
+    serving the offline curated list."""
+
+    models: list[str]
+    current: str
+    source: Literal["openrouter", "fallback"]
+
+
+class SetModelRequest(BaseModel):
+    """Body for POST /llm/model. Only the shared model changes — api_key /
+    base_url / per-task routing aren't exposed in this slice."""
+
+    model: str = Field(min_length=1)
+
+    @field_validator("model")
+    @classmethod
+    def _reject_whitespace(cls, v: str) -> str:
+        # `min_length=1` counts characters, not stripped length. Without this
+        # a whitespace-only string passes validation, then llm._clean() turns
+        # it into None and the override silently reverts to the .env default.
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("model must be a non-empty, non-whitespace string")
+        return stripped
+
+
+class ModelConfig(BaseModel):
+    """Response shape after POST /llm/model. Just the active model id."""
+
+    model: str

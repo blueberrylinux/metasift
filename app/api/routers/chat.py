@@ -53,7 +53,9 @@ _agent_lock = threading.Lock()
 
 
 def _get_agent() -> Any:
-    """Build once, cache forever (for this slice). Slice 4 adds rebuild-on-config-change."""
+    """Build once, cache until invalidated. `invalidate_agent()` drops the
+    cache so an LLM-config change rebuilds with the new model on the next
+    /chat/stream call."""
     global _agent
     with _agent_lock:
         if _agent is None:
@@ -62,6 +64,15 @@ def _get_agent() -> Any:
             logger.info("Building Stew agent (first /chat/stream request)")
             _agent = build_agent()
         return _agent
+
+
+def invalidate_agent() -> None:
+    """Drop the cached agent so the next request rebuilds. Called from the
+    /llm router whenever the model (or eventually api_key / base_url) changes
+    so the new config takes effect without a process restart."""
+    global _agent
+    with _agent_lock:
+        _agent = None
 
 
 # ── LangGraph → SSE frame adapter ─────────────────────────────────────────
