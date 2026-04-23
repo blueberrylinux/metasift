@@ -136,7 +136,9 @@ async def stream_agent_events(
     def run() -> None:
         seen_tool_call_ids: set[str] = set()
         final_text: str | None = None
-        last_tool_content: str | None = None  # fallback if stream ends without a text-only AIMessage
+        last_tool_content: str | None = (
+            None  # fallback if stream ends without a text-only AIMessage
+        )
         try:
             for chunk in agent.stream(
                 {"messages": lc_messages},
@@ -149,11 +151,7 @@ async def stream_agent_events(
                     for m in node_data.get("messages", []):
                         if isinstance(m, ToolMessage):
                             tc_id = getattr(m, "tool_call_id", None) or ""
-                            content = (
-                                m.content
-                                if isinstance(m.content, str)
-                                else str(m.content)
-                            )
+                            content = m.content if isinstance(m.content, str) else str(m.content)
                             last_tool_content = content
                             emit(
                                 {
@@ -252,10 +250,7 @@ def _history_from_store(convo_id: str) -> list[ChatMessage]:
     detail = store.get_conversation(convo_id)
     if detail is None:
         raise errors.conversation_not_found(convo_id)
-    return [
-        ChatMessage(role=m["role"], content=m["content"])
-        for m in detail["messages"]
-    ]
+    return [ChatMessage(role=m["role"], content=m["content"]) for m in detail["messages"]]
 
 
 @router.post("/stream")

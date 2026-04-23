@@ -9,8 +9,8 @@ rewrites app.main (Streamlit) or app.config — the two run side-by-side.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +73,5 @@ if api_settings.serve_static:
         logger.info(f"Serving static bundle from {dist_path}")
     else:
         logger.warning(
-            f"SERVE_STATIC=1 but {dist_path} does not exist. "
-            "Run `make build-web` first."
+            f"SERVE_STATIC=1 but {dist_path} does not exist. Run `make build-web` first."
         )

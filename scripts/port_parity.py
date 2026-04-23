@@ -32,7 +32,10 @@ import sys
 from typing import Any
 
 import httpx
-from langchain_core.messages import AIMessage, HumanMessage  # noqa: F401 (ToolMessage unused but kept for symmetry)
+from langchain_core.messages import (  # noqa: F401 (ToolMessage unused but kept for symmetry)
+    AIMessage,
+    HumanMessage,
+)
 
 
 def direct_trace(question: str) -> list[dict[str, Any]]:

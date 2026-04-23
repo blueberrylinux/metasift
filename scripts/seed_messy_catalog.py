@@ -230,18 +230,14 @@ def force_reset_table(c: httpx.Client, schema: str, spec: dict) -> None:
 
     # Column tags — replace each column's tags array by index. Rely on OM
     # preserving column order across PUT, which it does for named columns.
-    target_tags_by_name = {
-        name: _column_tags(tag) for name, _dtype, tag in spec["columns"]
-    }
+    target_tags_by_name = {name: _column_tags(tag) for name, _dtype, tag in spec["columns"]}
     for idx, col in enumerate(current.get("columns") or []):
         name = col.get("name")
         target = target_tags_by_name.get(name, [])
         current_fqns = sorted(t.get("tagFQN", "") for t in (col.get("tags") or []))
         target_fqns = sorted(t.get("tagFQN", "") for t in target)
         if current_fqns != target_fqns:
-            patches.append(
-                {"op": "replace", "path": f"/columns/{idx}/tags", "value": target}
-            )
+            patches.append({"op": "replace", "path": f"/columns/{idx}/tags", "value": target})
 
     if not patches:
         return

@@ -61,9 +61,7 @@ def _ensure_migrated(conn: sqlite3.Connection) -> None:
     # applying it depends on checking it. Chicken-and-egg solved by trying.
     try:
         conn.execute("SELECT 1 FROM _migrations LIMIT 1")
-        applied = {
-            row[0] for row in conn.execute("SELECT filename FROM _migrations").fetchall()
-        }
+        applied = {row[0] for row in conn.execute("SELECT filename FROM _migrations").fetchall()}
     except sqlite3.OperationalError:
         applied = set()
 
@@ -106,11 +104,15 @@ def new_conversation(title: str | None = None) -> str:
 
 def list_conversations(limit: int = 50) -> list[dict[str, Any]]:
     """Most recent conversations first."""
-    rows = get_conn().execute(
-        "SELECT id, title, created_at, updated_at FROM conversations "
-        "ORDER BY updated_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    rows = (
+        get_conn()
+        .execute(
+            "SELECT id, title, created_at, updated_at FROM conversations "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
+        .fetchall()
+    )
     return [dict(r) for r in rows]
 
 
@@ -149,8 +151,7 @@ def append_message(
     """Append a message; bump the conversation's updated_at."""
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, tool_trace) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO messages (conversation_id, role, content, tool_trace) VALUES (?, ?, ?, ?)",
             (convo_id, role, content, json.dumps(tool_trace) if tool_trace else None),
         )
         conn.execute(
@@ -177,13 +178,11 @@ def append_exchange(
     conn.execute("BEGIN")
     try:
         user_cur = conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, tool_trace) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO messages (conversation_id, role, content, tool_trace) VALUES (?, ?, ?, ?)",
             (convo_id, "user", user_content, None),
         )
         asst_cur = conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, tool_trace) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO messages (conversation_id, role, content, tool_trace) VALUES (?, ?, ?, ?)",
             (
                 convo_id,
                 "assistant",
@@ -228,20 +227,28 @@ def record_review_action(
 
 
 def review_history(item_id: str) -> list[dict[str, Any]]:
-    rows = get_conn().execute(
-        "SELECT * FROM review_actions WHERE item_id = ? ORDER BY id",
-        (item_id,),
-    ).fetchall()
+    rows = (
+        get_conn()
+        .execute(
+            "SELECT * FROM review_actions WHERE item_id = ? ORDER BY id",
+            (item_id,),
+        )
+        .fetchall()
+    )
     return [dict(r) for r in rows]
 
 
 def review_stats(days: int = 7) -> dict[str, int]:
     """Quick counts for the sidebar / header badges."""
-    rows = get_conn().execute(
-        "SELECT status, COUNT(*) AS n FROM review_actions "
-        "WHERE created_at >= datetime('now', ?) GROUP BY status",
-        (f"-{int(days)} days",),
-    ).fetchall()
+    rows = (
+        get_conn()
+        .execute(
+            "SELECT status, COUNT(*) AS n FROM review_actions "
+            "WHERE created_at >= datetime('now', ?) GROUP BY status",
+            (f"-{int(days)} days",),
+        )
+        .fetchall()
+    )
     out = {"accepted": 0, "rejected": 0, "accepted_edited": 0}
     for r in rows:
         out[r["status"]] = r["n"]
@@ -270,8 +277,7 @@ def finish_scan(
 ) -> None:
     with get_conn() as conn:
         conn.execute(
-            "UPDATE scan_runs SET finished_at = ?, status = ?, counts = ?, error = ? "
-            "WHERE id = ?",
+            "UPDATE scan_runs SET finished_at = ?, status = ?, counts = ?, error = ? WHERE id = ?",
             (
                 datetime.now(UTC).isoformat(),
                 status,
@@ -284,10 +290,14 @@ def finish_scan(
 
 def last_scan(kind: str) -> dict[str, Any] | None:
     """Most recent scan of a given kind, or None."""
-    row = get_conn().execute(
-        "SELECT * FROM scan_runs WHERE kind = ? ORDER BY started_at DESC LIMIT 1",
-        (kind,),
-    ).fetchone()
+    row = (
+        get_conn()
+        .execute(
+            "SELECT * FROM scan_runs WHERE kind = ? ORDER BY started_at DESC LIMIT 1",
+            (kind,),
+        )
+        .fetchone()
+    )
     if row is None:
         return None
     d = dict(row)
@@ -316,8 +326,12 @@ def last_scans(kinds: Iterable[str] | None = None) -> dict[str, dict[str, Any] |
 def scan_is_running(kind: str) -> bool:
     """True if there's an in-flight run of this kind. Used to prevent concurrent
     scans in single-worker mode."""
-    row = get_conn().execute(
-        "SELECT 1 FROM scan_runs WHERE kind = ? AND status = 'running' LIMIT 1",
-        (kind,),
-    ).fetchone()
+    row = (
+        get_conn()
+        .execute(
+            "SELECT 1 FROM scan_runs WHERE kind = ? AND status = 'running' LIMIT 1",
+            (kind,),
+        )
+        .fetchone()
+    )
     return row is not None
