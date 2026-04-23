@@ -81,8 +81,47 @@ class ChatMessage(BaseModel):
 
 
 class ChatStreamRequest(BaseModel):
-    """Body for POST /chat/stream. `history` is optional and echo-only in
-    slice 1 — slice 2 replaces it with a server-side lookup by conversation_id."""
+    """Body for POST /chat/stream. Either pass `conversation_id` (history is
+    loaded from SQLite and messages are persisted) or pass `history` directly
+    for stateless / ad-hoc calls. If both are set, `conversation_id` wins."""
 
     question: str = Field(min_length=1)
     history: list[ChatMessage] | None = None
+    conversation_id: str | None = None
+
+
+class CreateConversationRequest(BaseModel):
+    """Body for POST /chat/conversations. Title is optional — slice 3 adds a
+    UI-driven auto-title on first exchange."""
+
+    title: str | None = None
+
+
+class ConversationSummary(BaseModel):
+    """Row in GET /chat/conversations — no messages, keeps the list cheap."""
+
+    id: str
+    title: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ConversationListResponse(BaseModel):
+    rows: list[ConversationSummary]
+
+
+class PersistedMessage(BaseModel):
+    """One row of a saved conversation's message history. `tool_trace` is the
+    demuxed [{tool, args, result}] list from chat streaming, or None for user
+    messages."""
+
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    tool_trace: list[dict] | None = None
+    created_at: str
+
+
+class ConversationDetailResponse(BaseModel):
+    conversation: ConversationSummary
+    messages: list[PersistedMessage]

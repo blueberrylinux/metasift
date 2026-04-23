@@ -160,6 +160,48 @@ def append_message(
         return cur.lastrowid or 0
 
 
+def append_exchange(
+    convo_id: str,
+    user_content: str,
+    assistant_content: str,
+    tool_trace: list[dict] | None = None,
+) -> tuple[int, int]:
+    """Atomically persist one user→assistant turn. Either both rows land or
+    neither — prevents dangling user messages if the assistant write fails.
+
+    The connection is opened in autocommit mode (`isolation_level=None`,
+    see `get_conn`), so `with conn` wouldn't give us rollback here. Explicit
+    `BEGIN` / `COMMIT` / `ROLLBACK` is the only safe way.
+    """
+    conn = get_conn()
+    conn.execute("BEGIN")
+    try:
+        user_cur = conn.execute(
+            "INSERT INTO messages (conversation_id, role, content, tool_trace) "
+            "VALUES (?, ?, ?, ?)",
+            (convo_id, "user", user_content, None),
+        )
+        asst_cur = conn.execute(
+            "INSERT INTO messages (conversation_id, role, content, tool_trace) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                convo_id,
+                "assistant",
+                assistant_content,
+                json.dumps(tool_trace) if tool_trace else None,
+            ),
+        )
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (datetime.now(UTC).isoformat(), convo_id),
+        )
+        conn.execute("COMMIT")
+        return user_cur.lastrowid or 0, asst_cur.lastrowid or 0
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 # ── Review actions ────────────────────────────────────────────────────────────
 
 

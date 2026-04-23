@@ -1,15 +1,21 @@
-"""Chat streaming — Phase 2 slice 1.
+"""Chat — Phase 2 slices 1 + 2.
 
-Single endpoint: POST /chat/stream. Iterates the LangGraph agent via
-`agent.stream(..., stream_mode="updates")` and demuxes node-update dicts into
-four SSE frame types — `token`, `tool_call`, `tool_result`, `final` — plus an
-`error` frame on failure.
+* Slice 1: POST /chat/stream. Iterates the LangGraph agent via
+  `agent.stream(..., stream_mode="updates")` and demuxes node-update dicts
+  into SSE frame types `token`, `tool_call`, `tool_result`, `final`, `error`.
+* Slice 2: Conversation CRUD + server-side history + persistence:
+    - POST   /chat/conversations           create
+    - GET    /chat/conversations           list (most recent first)
+    - GET    /chat/conversations/{id}      full history including tool_trace
+  When /chat/stream is called with a `conversation_id`, history is loaded
+  from SQLite (request-supplied `history` is ignored) and both the user
+  question and assistant reply are appended on the final frame.
 
-No persistence yet (slice 2). No reload endpoint yet (slice 4). The agent is
-built lazily on the first request and cached module-globally; an LLM-config
-change in this slice would require a server restart.
+No reload endpoint yet (slice 4). The agent is built lazily on the first
+request and cached module-globally; an LLM-config change requires a server
+restart until slice 4.
 
-Reference for the demux: `app/main.py::1431-1488` (Streamlit sync version).
+Reference for the stream demux: `app/main.py::1431-1488` (Streamlit sync).
 """
 
 from __future__ import annotations
@@ -26,7 +32,16 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
-from app.api.schemas import ChatMessage, ChatStreamRequest
+from app.api import errors, store
+from app.api.schemas import (
+    ChatMessage,
+    ChatStreamRequest,
+    ConversationDetailResponse,
+    ConversationListResponse,
+    ConversationSummary,
+    CreateConversationRequest,
+    PersistedMessage,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -177,25 +192,127 @@ async def stream_agent_events(
         yield ev
 
 
-# ── Route ──────────────────────────────────────────────────────────────────
+# ── Conversation CRUD ─────────────────────────────────────────────────────
+
+
+def _row_to_summary(row: dict[str, Any]) -> ConversationSummary:
+    return ConversationSummary.model_validate(row)
+
+
+@router.post("/conversations", response_model=ConversationSummary, status_code=201)
+def create_conversation(req: CreateConversationRequest) -> ConversationSummary:
+    """Start a new conversation. Empty by default — first message comes via
+    /chat/stream with this id."""
+    convo_id = store.new_conversation(title=req.title)
+    detail = store.get_conversation(convo_id)
+    assert detail is not None  # just created
+    return _row_to_summary(detail["conversation"])
+
+
+@router.get("/conversations", response_model=ConversationListResponse)
+def list_conversations(limit: int = 50) -> ConversationListResponse:
+    """Most recently updated conversations first. Cheap — no messages joined."""
+    rows = store.list_conversations(limit=limit)
+    return ConversationListResponse(rows=[_row_to_summary(r) for r in rows])
+
+
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationDetailResponse,
+)
+def get_conversation(conversation_id: str) -> ConversationDetailResponse:
+    """Full transcript for a conversation, tool traces included."""
+    detail = store.get_conversation(conversation_id)
+    if detail is None:
+        raise errors.conversation_not_found(conversation_id)
+    return ConversationDetailResponse(
+        conversation=_row_to_summary(detail["conversation"]),
+        messages=[PersistedMessage.model_validate(m) for m in detail["messages"]],
+    )
+
+
+# ── Streaming chat ────────────────────────────────────────────────────────
+
+
+def _history_from_store(convo_id: str) -> list[ChatMessage]:
+    """Pull a conversation's prior user/assistant turns from SQLite and shape
+    them for `stream_agent_events`. tool_trace is intentionally dropped here —
+    the agent replays on content alone, just like the Streamlit session does."""
+    detail = store.get_conversation(convo_id)
+    if detail is None:
+        raise errors.conversation_not_found(convo_id)
+    return [
+        ChatMessage(role=m["role"], content=m["content"])
+        for m in detail["messages"]
+    ]
 
 
 @router.post("/stream")
 async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
     """SSE stream of the agent's response to a single user question.
 
-    Body: `{question: str, history?: [{role, content}]}`.
+    Body: `{question, conversation_id?, history?}`.
 
-    Each SSE event carries `event: <type>` and `data: <json>` where type is
-    one of `token`, `tool_call`, `tool_result`, `final`, `error`. Stream ends
-    after `final` or `error`.
+    If `conversation_id` is set, prior turns are loaded from SQLite and the
+    user question + assistant reply (with tool_trace) are appended after the
+    final frame. If it's unset, `history` is used as-is and nothing is saved.
 
-    Slice 1 is stateless — `history` is echo-only, nothing is persisted.
-    Slice 2 wires conversation IDs and SQLite writes.
+    Emits SSE events with `event: <type>` where type is one of `token`,
+    `tool_call`, `tool_result`, `final`, `error`. Stream ends after `final`
+    or `error`.
+
+    404 is raised before the stream starts if `conversation_id` doesn't exist.
+    Errors after streaming has begun arrive as an `error` frame (status 200 —
+    can't change HTTP status mid-stream).
     """
+    if req.conversation_id is not None:
+        history = _history_from_store(req.conversation_id)
+    else:
+        history = req.history or []
+
+    convo_id = req.conversation_id
+    question = req.question
 
     async def events() -> AsyncIterator[dict[str, str]]:
-        async for ev in stream_agent_events(req.question, req.history):
-            yield {"event": ev["type"], "data": json.dumps(ev)}
+        # Collect frames so we can write a coherent tool_trace + assistant
+        # message once the stream closes. Mirrors `app/main.py::1481-1488`'s
+        # tool_calls_by_id / tool_results_by_id shape.
+        calls_by_id: dict[str, dict[str, Any]] = {}
+        results_by_id: dict[str, str] = {}
+        final_text: str = ""
+        errored = False
+
+        async for ev in stream_agent_events(question, history):
+            etype = ev["type"]
+            if etype == "tool_call":
+                calls_by_id[ev["id"]] = {"name": ev["name"], "args": ev["args"]}
+            elif etype == "tool_result":
+                results_by_id[ev["id"]] = ev["content"]
+            elif etype == "final":
+                final_text = ev["text"]
+            elif etype == "error":
+                errored = True
+            yield {"event": etype, "data": json.dumps(ev)}
+
+        # Persist only if a conversation is attached AND the stream succeeded.
+        # Failed runs leave no trace — retrying them repopulates cleanly.
+        if convo_id and not errored and final_text:
+            traces = [
+                {
+                    "tool": info["name"],
+                    "args": info["args"],
+                    "result": results_by_id.get(tc_id, ""),
+                }
+                for tc_id, info in calls_by_id.items()
+            ]
+            try:
+                store.append_exchange(
+                    convo_id,
+                    user_content=question,
+                    assistant_content=final_text,
+                    tool_trace=traces or None,
+                )
+            except Exception as e:
+                logger.exception(f"failed to persist conversation {convo_id}: {e}")
 
     return EventSourceResponse(events())
