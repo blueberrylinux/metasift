@@ -32,21 +32,21 @@ Format: `scaffold says` → `reality` → `fix in port code`.
 
 ## Analysis engine names
 
-| Scaffold | Reality |
-| --- | --- |
-| `analysis.coverage_by_schema()` | `analysis.documentation_coverage()` |
-| `analysis.team_scorecard()` | `analysis.ownership_breakdown()` |
-| `analysis.blast_radius_topn()` | `analysis.top_blast_radius(limit=10)` |
-| `cleaning.pii_propagation_dag(duck)` | `viz.governance_lineage_dag()` (in viz, not cleaning — returns a plotly Figure) |
-| `cleaning.dq_risk_catalog(duck, limit=...)` | `analysis.dq_risk_ranking(limit=20)` |
-| `cleaning.dq_impact(duck, fqn)` | `analysis.dq_impact(fqn, max_depth=10)` |
-| `cleaning.explain_one_failure(duck, test_case_id)` | `cleaning.explain_dq_failure(row)` — takes a dict row from `analysis.dq_failures()`, not a test_case_id |
+| Scaffold | Reality | Fix |
+| --- | --- | --- |
+| `analysis.coverage_by_schema()` | `analysis.documentation_coverage()` | — |
+| `analysis.team_scorecard()` | `analysis.ownership_breakdown()` | — |
+| `analysis.blast_radius_topn()` | `analysis.top_blast_radius(limit=10)` | — |
+| `cleaning.pii_propagation_dag(duck)` | `viz.governance_lineage_dag()` (in viz, not cleaning — returns a plotly Figure) | — |
+| `cleaning.dq_risk_catalog(duck, limit=...)` | `analysis.dq_risk_ranking(limit=20)` | — |
+| `cleaning.dq_impact(duck, fqn)` | `analysis.dq_impact(fqn, max_depth=10)` | — |
+| `cleaning.explain_one_failure(duck, test_case_id)` | `cleaning.explain_dq_failure(row)` — takes a dict row from `analysis.dq_failures()`, not a test_case_id | — |
 | `cleaning.set_fix_type(...)`, `cleaning.classify_fix_type(...)`, `cleaning.fix_action(...)` | **None exist.** `fix_type` is computed inside `explain_dq_failure`; there's no manual override API | If manual classification is needed, add a column to `dq_explanations` and write a new function. Skip for Phase 1-5. |
 
 ## Stewardship dispatch
 
-| Scaffold | Reality |
-| --- | --- |
+| Scaffold | Reality | Fix |
+| --- | --- | --- |
 | `stewardship.apply(item, om=om)` — single dispatcher | Two separate functions: `apply_suggestion(Suggestion)` for descriptions, `apply_pii_tag(table_fqn, column_name, tag_fqn)` for tags | Route-level dispatcher: look at `item.kind`, build a `Suggestion` dataclass or pull FQN/column/tag, call the right one. |
 | `stewardship.render_dq_payload(duck, table_fqn, rec_id)` | No such function | Construct the OM test-case JSON client-side or add a new helper. |
 
@@ -105,8 +105,8 @@ async def scan_dq_explain():
 
 ## Config
 
-| Scaffold | Reality |
-| --- | --- |
+| Scaffold | Reality | Fix |
+| --- | --- | --- |
 | `settings.cors_origins`, `settings.serve_static` | Not defined on `app.config.Settings` | Defined in `app.api.config.api_settings` instead. **Do not** edit `app/config.py`. |
 | `settings.load_llm_config()`, `settings.save_llm_config()` | No such methods | Persist overrides through `app.clients.llm.set_override()` + SQLite if persistence needed. |
 | `settings.load_per_task_models()`, `settings.save_per_task_models()` | Same | Use `llm.get_task_model(task)` / `llm.set_task_model(task, model)`. |
@@ -124,9 +124,11 @@ Scaffold says "26 local + 3 MCP = 29 tools". Actual `ALL_TOOLS` in `app/engines/
 ## MCP allowlist
 
 Hardcoded in `app/engines/agent.py::_MCP_TOOL_ALLOWLIST`:
+
 ```python
 {"search_metadata", "get_entity_details", "get_entity_lineage"}
 ```
+
 Write-capable MCP tools (`patch_entity`, `create_glossary*`) are **explicitly excluded** — all writes must go through MetaSift's review queue. Do not widen the allowlist in the port.
 
 ## Docker compose

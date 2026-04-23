@@ -302,7 +302,8 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
 
         # Persist only if a conversation is attached AND the stream succeeded.
         # Failed runs leave no trace — retrying them repopulates cleanly.
-        if convo_id and not errored and final_text:
+        # Empty `final_text` still persists so the user's question is recorded.
+        if convo_id and not errored:
             traces = [
                 {
                     "tool": info["name"],

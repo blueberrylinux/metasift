@@ -81,14 +81,13 @@ async def refresh() -> RefreshResponse:
     Single-worker FastAPI + in-memory DuckDB means only one refresh can run at
     a time — we guard with the scan_is_running check so a double-click doesn't
     corrupt in-flight writes."""
-    if store.scan_is_running("refresh"):
+    run_id = store.try_start_scan("refresh")
+    if run_id is None:
         raise errors.ApiError(
             errors.ErrorCode.SCAN_ALREADY_RUNNING,
             "A metadata refresh is already running. Wait for it to finish.",
             status_code=409,
         )
-
-    run_id = store.start_scan("refresh")
     started = time.perf_counter()
     try:
         # refresh_all is sync and touches OM over HTTP; push it off the event
