@@ -24,6 +24,11 @@ metasift.egg-info/
 web/node_modules/
 web/dist/
 web/.vite/
+web/*.tsbuildinfo
+# `tsc -b` with the tsconfig.node.json project ref emits these alongside
+# vite.config.ts — build artifacts, not source.
+web/vite.config.js
+web/vite.config.d.ts
 *.sqlite
 *.sqlite-journal
 *.sqlite-shm
