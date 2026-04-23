@@ -8,6 +8,7 @@
  * the TopBar's "Welcome guide" button re-opens it on demand.
  */
 
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { LogoM } from './LogoM';
@@ -90,6 +91,57 @@ const TONE_CLS: Record<Feature['tone'], string> = {
 
 export function WelcomeModal({ onClose }: Props) {
   const nav = useNavigate();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  // Escape-to-close + focus trap. Not using a modal library because the rest
+  // of the app is tiny and Radix/HeadlessUI would be a sledgehammer — but we
+  // do owe users the basics: return key restores focus, Tab stays inside the
+  // dialog, previously-focused element gets focus back on close.
+  useEffect(() => {
+    const root = dialogRef.current;
+    if (!root) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const focusables = () =>
+      Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute('data-focus-skip'));
+
+    // Focus the first interactive control so keyboard users land inside the
+    // dialog immediately — starting on the close button specifically would
+    // make "Enter" dismiss the modal before anyone sees it.
+    const first = focusables()[0];
+    first?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = focusables();
+      if (items.length === 0) return;
+      const firstEl = items[0];
+      const lastEl = items[items.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === firstEl) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && active === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [onClose]);
 
   const startWith = (q: string) => {
     // Hand the suggestion text through to /chat via URL query param.
@@ -100,6 +152,7 @@ export function WelcomeModal({ onClose }: Props) {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="welcome-title"

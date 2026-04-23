@@ -9,7 +9,7 @@
  * first finishes persisting.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ModelQuickPicker } from './ModelQuickPicker';
 
@@ -29,6 +29,7 @@ export function Composer({
   footerExtra,
 }: Props) {
   const [value, setValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const submit = () => {
     const trimmed = value.trim();
@@ -37,12 +38,36 @@ export function Composer({
     setValue('');
   };
 
+  // Global "/" shortcut: focus the composer when the user isn't already
+  // typing in a field. Mirrors the convention GitHub / Slack / Linear use
+  // and makes the chat instantly usable without reaching for the mouse.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target?.isContentEditable
+      )
+        return;
+      e.preventDefault();
+      textareaRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className="border-t border-slate-800/80 bg-slate-950/80 backdrop-blur px-6 py-4">
       <div className="max-w-3xl mx-auto">
         <div className="focus-ring rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition">
           <div className="flex items-end gap-2 p-2">
             <textarea
+              ref={textareaRef}
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => {
@@ -84,6 +109,8 @@ export function Composer({
               {footerExtra}
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <kbd>/</kbd>
+              <span>focus</span>
               <kbd>↵</kbd>
               <span>send</span>
               <kbd>shift+↵</kbd>
