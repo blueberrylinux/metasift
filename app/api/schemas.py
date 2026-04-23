@@ -7,6 +7,8 @@ review, viz, and report shapes as they're implemented.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -65,3 +67,22 @@ class RefreshResponse(BaseModel):
     run_id: int
     counts: dict[str, int]
     duration_ms: int
+
+
+# ── /chat ─────────────────────────────────────────────────────────────────
+
+
+class ChatMessage(BaseModel):
+    """A single turn in the conversation history. Slice 1 accepts these as
+    request input only; slice 2 adds retrieval from SQLite."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatStreamRequest(BaseModel):
+    """Body for POST /chat/stream. `history` is optional and echo-only in
+    slice 1 — slice 2 replaces it with a server-side lookup by conversation_id."""
+
+    question: str = Field(min_length=1)
+    history: list[ChatMessage] | None = None
