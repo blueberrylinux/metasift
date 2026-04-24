@@ -436,7 +436,7 @@ class DQRecommendationsResponse(BaseModel):
 
 class DQRiskRow(BaseModel):
     """One row in the catalog-wide DQ risk ranking. `risk_score` is
-    failed_tests × (direct + 0.5·transitive + 2·pii_downstream) —
+    failed_tests * (direct + 0.5*transitive + 2*pii_downstream) —
     zero when either side is zero."""
 
     fqn: str

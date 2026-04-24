@@ -114,7 +114,21 @@ async def refresh() -> RefreshResponse:
     except Exception as exc:
         store.finish_scan(run_id, status="failed", error=str(exc))
         logger.exception("refresh_all failed")
-        raise errors.om_unreachable() from exc
+        # `refresh_all` does both OM HTTP calls AND local DuckDB / pandas
+        # work. Mapping every failure to OM_UNREACHABLE would report a
+        # DuckDB binder bug or a pandas issue as an OpenMetadata outage —
+        # catastrophic for diagnosis. Only translate clearly-OM errors
+        # (httpx) to OM_UNREACHABLE; other failures surface as a generic
+        # INTERNAL_ERROR so operators see the real cause.
+        import httpx
+
+        if isinstance(exc, (httpx.HTTPError, httpx.InvalidURL, ConnectionError)):
+            raise errors.om_unreachable() from exc
+        raise errors.ApiError(
+            errors.ErrorCode.INTERNAL_ERROR,
+            f"Refresh failed: {type(exc).__name__}. Check server logs.",
+            status_code=500,
+        ) from exc
 
     duration_ms = math.floor((time.perf_counter() - started) * 1000)
     store.finish_scan(run_id, status="completed", counts=counts)

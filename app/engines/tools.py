@@ -90,11 +90,17 @@ def list_services() -> str:
     service name, kind, connector type, and how many tables each
     database service has actually ingested.
     """
-    if not _has_data():
+    # Don't gate on `_has_data()` — that checks `om_tables`, so a catalog
+    # with services registered but zero ingested tables (e.g. a fresh
+    # connector post-crawl) would falsely show the refresh hint. The
+    # coverage query handles missing tables via its LEFT JOIN; an empty
+    # result means refresh genuinely hasn't run.
+    try:
+        df = analysis.service_coverage()
+    except Exception:
         return _EMPTY_HINT
-    df = analysis.service_coverage()
     if df.empty:
-        return "No services registered in OpenMetadata."
+        return _EMPTY_HINT
     return df.to_markdown(index=False)
 
 

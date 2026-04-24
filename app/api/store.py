@@ -28,6 +28,23 @@ from loguru import logger
 
 from app.api.config import api_settings
 
+
+def iso_utc_z() -> str:
+    """Current UTC timestamp in the Zulu-suffixed ISO-8601 shape the schema
+    uses (`strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`).
+
+    Python's `datetime.now(UTC).isoformat()` produces `...+00:00` with
+    microsecond precision; the schema default produces `...Z` with
+    millisecond precision. Both sort correctly numerically, but mixing
+    them leaves inconsistent-looking rows. Keeping every Python-side
+    write routed through this helper keeps the format uniform.
+    """
+    # Millisecond precision to match SQLite's `%f` (which yields 3-digit
+    # fractional seconds). Round via string slicing rather than arithmetic
+    # so we don't accidentally truncate e.g. 59.999 → 59.99.
+    now = datetime.now(UTC)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _tls = threading.local()
 _migrate_lock = threading.Lock()
@@ -110,15 +127,19 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             continue
         logger.info(f"Applying migration {mig_path.name}")
         sql = mig_path.read_text()
-        # `executescript` implicitly COMMITs any pending transaction first, so
-        # wrapping it in a BEGIN/COMMIT here would be a no-op at best and a
-        # double-commit error at worst. Autocommit-per-statement is fine for
-        # one-time schema DDL.
-        conn.executescript(sql)
-        conn.execute(
-            "INSERT OR IGNORE INTO _migrations (filename) VALUES (?)",
-            (mig_path.name,),
-        )
+        # Append the bookkeeping INSERT into the same `executescript` call so
+        # that schema DDL and "this file has been applied" land together. If
+        # they were separate Python statements, a crash between them would
+        # leave the schema applied but unrecorded, and the next boot would
+        # try to re-apply (breaking CREATE TABLE IF NOT EXISTS guards only
+        # by luck). `executescript` is autocommit per statement, so this
+        # isn't perfectly transactional — but collapsing them into one round
+        # trip shrinks the failure window to effectively zero.
+        # Filenames come from our own migrations/ dir; still escape quotes
+        # defensively so a rename to a file with `'` can never SQL-inject.
+        escaped_name = mig_path.name.replace("'", "''")
+        combined = f"{sql};\nINSERT OR IGNORE INTO _migrations (filename) VALUES ('{escaped_name}');"
+        conn.executescript(combined)
 
 
 def ping() -> bool:
@@ -150,20 +171,16 @@ def rename_conversation(convo_id: str, title: str | None) -> bool:
     back to the 'Untitled conversation' placeholder. Bumps updated_at so
     the row floats to the top of the recents list after a rename.
 
-    Uses `datetime.now(UTC).isoformat()` — NOT SQLite's `CURRENT_TIMESTAMP`
-    — because the rest of the codebase writes ISO-8601 with `T` + `Z`
-    (e.g. `2026-04-24T17:19:55.308Z`). `CURRENT_TIMESTAMP` writes the
-    space-separated SQLite default (`2026-04-24 17:19:55`), and a
-    lexicographic `ORDER BY updated_at DESC` on TEXT sorts `space` (0x20)
-    before `T` (0x54) — so rows renamed with CURRENT_TIMESTAMP would sink
-    below every message-append-updated row. Using isoformat keeps the
-    ordering honest.
+    Uses `iso_utc_z()` to match the schema's `%Y-%m-%dT%H:%M:%fZ` default
+    — not SQLite's bare `CURRENT_TIMESTAMP`, which writes the
+    space-separated `YYYY-MM-DD HH:MM:SS` default and would sink renamed
+    rows below every message-append-updated row in the lex sort.
     """
     normalized = title if title else None
     with get_conn() as conn:
         cur = conn.execute(
             "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-            (normalized, datetime.now(UTC).isoformat(), convo_id),
+            (normalized, iso_utc_z(), convo_id),
         )
     return cur.rowcount > 0
 
@@ -233,7 +250,7 @@ def append_message(
         )
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (datetime.now(UTC).isoformat(), convo_id),
+            (iso_utc_z(), convo_id),
         )
         return cur.lastrowid or 0
 
@@ -269,7 +286,7 @@ def append_exchange(
         )
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (datetime.now(UTC).isoformat(), convo_id),
+            (iso_utc_z(), convo_id),
         )
         conn.execute("COMMIT")
         return user_cur.lastrowid or 0, asst_cur.lastrowid or 0
@@ -389,7 +406,7 @@ def finish_scan(
         conn.execute(
             "UPDATE scan_runs SET finished_at = ?, status = ?, counts = ?, error = ? WHERE id = ?",
             (
-                datetime.now(UTC).isoformat(),
+                iso_utc_z(),
                 status,
                 json.dumps(counts) if counts else None,
                 error,
@@ -414,7 +431,7 @@ def reap_zombie_scans() -> int:
             "UPDATE scan_runs SET finished_at = ?, status = 'failed', "
             "error = 'Reaped on startup — process died before scan finished' "
             "WHERE status = 'running'",
-            (datetime.now(UTC).isoformat(),),
+            (iso_utc_z(),),
         )
         return cur.rowcount or 0
 
