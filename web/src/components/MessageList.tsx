@@ -8,6 +8,7 @@
  */
 
 import type { PersistedMessage, ToolTraceEntry } from '../lib/api';
+import { ChatMarkdown } from './ChatMarkdown';
 import { LogoM } from './LogoM';
 import { ToolTrace } from './ToolTrace';
 
@@ -78,8 +79,8 @@ function MessageBubble({
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-[11px] text-emerald-400 font-semibold mb-1">Stew</div>
-        <div className="msg-stew rounded-2xl rounded-tl-md px-4 py-3 text-[14px] text-slate-200 leading-relaxed whitespace-pre-wrap">
-          {content}
+        <div className="msg-stew rounded-2xl rounded-tl-md px-4 py-3">
+          <ChatMarkdown source={content} />
         </div>
         <ToolTrace traces={traces} />
       </div>
@@ -107,11 +108,11 @@ function InFlightBubble({ state }: { state: InFlightState }) {
           <div className="text-[11px] text-emerald-400 font-semibold mb-1">
             Stew {!state.done && <span className="text-slate-500">· streaming</span>}
           </div>
-          <div className="msg-stew rounded-2xl rounded-tl-md px-4 py-3 text-[14px] text-slate-200 leading-relaxed whitespace-pre-wrap">
+          <div className="msg-stew rounded-2xl rounded-tl-md px-4 py-3">
             {state.error ? (
               <span className="text-red-300 font-mono text-xs">⚠ {state.error}</span>
             ) : state.finalText ? (
-              state.finalText
+              <ChatMarkdown source={state.finalText} />
             ) : (
               <span className="inline-flex items-center gap-1 text-slate-500 italic">
                 {hasTools ? 'running tools' : 'thinking'}
