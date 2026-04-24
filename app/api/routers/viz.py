@@ -18,6 +18,7 @@ a new tab lands.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter
@@ -136,4 +137,10 @@ def get_figure(slug: str, duck_ok: DuckOk) -> VizFigureResponse:
         ) from e
     if fig is None:
         return VizFigureResponse(figure=None)
-    return VizFigureResponse(figure=fig.to_dict())
+    # Round-trip through `fig.to_json()` instead of `fig.to_dict()` —
+    # `to_dict()` can leave numpy arrays in place (e.g. when a builder
+    # passes np arrays straight to a Plotly trace), and Pydantic's
+    # serializer refuses those. `to_json()` uses Plotly's own encoder which
+    # handles numpy / datetime / etc., and `json.loads` gives us a fully
+    # JSON-safe dict that Pydantic can forward unchanged.
+    return VizFigureResponse(figure=json.loads(fig.to_json()))
