@@ -45,8 +45,26 @@ export function StewConversation() {
     el.scrollTop = el.scrollHeight;
   }, [detail.data?.messages.length, inFlight]);
 
+  // Abort controller lives across re-renders so we can cancel an in-flight
+  // stream on unmount (route change, tab close) or when a new send fires
+  // before the previous one finishes. Without this the SSE connection stays
+  // open on the server until it naturally ends — stuck chat workers pile up
+  // on the backend's dedicated executor.
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const send = useMutation({
     mutationFn: async (question: string) => {
+      // Cancel any previous in-flight stream before starting a new one.
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
       const initial: InFlightState = {
         question,
         calls: {},
@@ -57,37 +75,48 @@ export function StewConversation() {
         done: false,
       };
       setInFlight(initial);
-      await streamChat({ question, conversation_id: conversationId }, (frame) => {
-        setInFlight((prev) => {
-          if (!prev) return prev;
-          const next: InFlightState = {
-            ...prev,
-            calls: { ...prev.calls },
-            results: { ...prev.results },
-            tokens: prev.tokens,
-          };
-          switch (frame.type) {
-            case 'tool_call':
-              next.calls[frame.id] = { name: frame.name, args: frame.args };
-              break;
-            case 'tool_result':
-              next.results[frame.id] = frame.content;
-              break;
-            case 'token':
-              next.tokens = [...prev.tokens, frame.text];
-              break;
-            case 'final':
-              next.finalText = frame.text;
-              next.done = true;
-              break;
-            case 'error':
-              next.error = frame.message;
-              next.done = true;
-              break;
-          }
-          return next;
-        });
-      });
+      try {
+        await streamChat(
+          { question, conversation_id: conversationId },
+          (frame) => {
+            setInFlight((prev) => {
+              if (!prev) return prev;
+              const next: InFlightState = {
+                ...prev,
+                calls: { ...prev.calls },
+                results: { ...prev.results },
+                tokens: prev.tokens,
+              };
+              switch (frame.type) {
+                case 'tool_call':
+                  next.calls[frame.id] = { name: frame.name, args: frame.args };
+                  break;
+                case 'tool_result':
+                  next.results[frame.id] = frame.content;
+                  break;
+                case 'token':
+                  next.tokens = [...prev.tokens, frame.text];
+                  break;
+                case 'final':
+                  next.finalText = frame.text;
+                  next.done = true;
+                  break;
+                case 'error':
+                  next.error = frame.message;
+                  next.done = true;
+                  break;
+              }
+              return next;
+            });
+          },
+          ctrl.signal,
+        );
+      } catch (e) {
+        // AbortError is expected when the user navigates away — swallow it
+        // so useMutation doesn't flash an error state for an intentional cancel.
+        if (e instanceof DOMException && e.name === 'AbortError') return;
+        throw e;
+      }
     },
     onSettled: async () => {
       // Server persisted on `final`; refetch the detail (and list, for the

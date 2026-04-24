@@ -12,7 +12,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -303,34 +303,53 @@ function QuickAction({
 }) {
   const qc = useQueryClient();
   const [state, setState] = useState<QuickState>(INITIAL_STATE);
+  // Abort in-flight scans on unmount (route change, app close) so the
+  // backend's dedicated scan executor doesn't accumulate orphaned workers.
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const run = useMutation({
     mutationFn: async () => {
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
       setState({ ...INITIAL_STATE, running: true, label: 'Starting…' });
-      await streamScan(
-        kind,
-        (frame: ScanFrame) => {
-          setState((prev) => {
-            if (frame.type === 'progress') {
-              return {
-                ...prev,
-                step: frame.step,
-                total: frame.total,
-                label: frame.label,
-              };
-            }
-            if (frame.type === 'done') {
-              toast.success(`${label} done`, {
-                description: summariseCounts(kind, frame.counts),
-              });
-              return { ...prev, running: false };
-            }
-            toast.error(`${label} failed`, { description: frame.message });
-            return { ...prev, running: false, err: frame.message };
-          });
-        },
-        body,
-      );
+      try {
+        await streamScan(
+          kind,
+          (frame: ScanFrame) => {
+            setState((prev) => {
+              if (frame.type === 'progress') {
+                return {
+                  ...prev,
+                  step: frame.step,
+                  total: frame.total,
+                  label: frame.label,
+                };
+              }
+              if (frame.type === 'done') {
+                toast.success(`${label} done`, {
+                  description: summariseCounts(kind, frame.counts),
+                });
+                return { ...prev, running: false };
+              }
+              toast.error(`${label} failed`, { description: frame.message });
+              return { ...prev, running: false, err: frame.message };
+            });
+          },
+          body,
+          ctrl.signal,
+        );
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return;
+        throw e;
+      }
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['composite'] });
