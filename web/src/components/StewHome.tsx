@@ -42,8 +42,8 @@ export function StewHome({
           answer.
         </p>
         <div className="mt-3 flex items-center gap-3 text-[11px] text-slate-500">
-          <span className="chip">28 tools</span>
-          <span className="font-mono">25 local · 3 MCP</span>
+          <span className="chip">29 tools</span>
+          <span className="font-mono">26 local · 3 MCP</span>
           <span className="text-slate-700">·</span>
           <span className="font-mono">show-your-work</span>
         </div>

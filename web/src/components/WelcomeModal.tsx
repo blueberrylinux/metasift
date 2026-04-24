@@ -29,8 +29,8 @@ const FEATURES: Feature[] = [
   {
     icon: '◆',
     title: 'Analysis',
-    desc: 'Aggregate SQL analytics over your catalog — coverage, tag conflicts, lineage impact, composite score.',
-    chip: '4 tools',
+    desc: 'Aggregate SQL analytics over your catalog — coverage, tag conflicts, lineage impact, PII propagation, composite score.',
+    chip: '5 tools',
     tone: 'emerald',
   },
   {
@@ -50,8 +50,8 @@ const FEATURES: Feature[] = [
   {
     icon: '💬',
     title: 'Stew',
-    desc: 'Chat with a LangChain agent grounded in 25 local tools + 3 MCP. Every reply shows its work.',
-    chip: '28 tools',
+    desc: 'Chat with a LangChain agent grounded in 26 local tools + 3 MCP. Every reply shows its work.',
+    chip: '29 tools',
     tone: 'emerald',
   },
 ];

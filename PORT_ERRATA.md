@@ -119,7 +119,7 @@ async def scan_dq_explain():
 
 ## Tool count
 
-Scaffold says "26 local + 3 MCP = 29 tools". Actual `ALL_TOOLS` in `app/engines/tools.py` lists **25**. DEVLOG says "24 was 18 → 26 after DQ trio" — off-by-one. The count in user-facing strings (READMEs, welcome dialog, chips) should be **25 local + 3 MCP = 28** unless/until one more @tool is added.
+**Resolved (2026-04-24):** `list_services` added, so `ALL_TOOLS` is now **26 local + 3 MCP = 29**. Scaffold docs, WelcomeModal, StewHome, and Settings strings all align.
 
 ## MCP allowlist
 

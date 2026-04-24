@@ -680,8 +680,18 @@ function DefaultsBanner({ applied, onApply }: { applied: boolean; onApply: () =>
 function AgentToolsCard() {
   const buckets: { title: string; items: string[]; muted?: boolean }[] = [
     {
+      title: 'Discovery',
+      items: ['list_services', 'list_schemas', 'list_tables', 'about_metasift', 'run_sql'],
+    },
+    {
       title: 'Analysis',
-      items: ['composite_score', 'documentation_coverage', 'impact_check', 'dq_impact', 'pii_propagation'],
+      items: [
+        'composite_score',
+        'documentation_coverage',
+        'ownership_report',
+        'impact_check',
+        'pii_propagation',
+      ],
     },
     {
       title: 'Cleaning',
@@ -689,9 +699,7 @@ function AgentToolsCard() {
         'check_description_staleness',
         'find_tag_conflicts',
         'score_descriptions',
-        'naming_clusters',
-        'pii_scan',
-        'dq_explain',
+        'find_naming_inconsistencies',
       ],
     },
     {
@@ -700,17 +708,21 @@ function AgentToolsCard() {
         'generate_description_for',
         'auto_document_schema',
         'apply_description',
-        'recommend_dq_tests',
-        'find_dq_gaps',
+        'scan_pii',
+        'find_pii_gaps',
+        'apply_pii_tag',
       ],
     },
     {
-      title: 'Catalog / duckdb',
-      items: ['list_tables', 'list_schemas', 'get_table', 'about_metasift'],
-    },
-    {
       title: 'DQ · risk',
-      items: ['dq_failures_summary', 'dq_risk_catalog'],
+      items: [
+        'dq_failures_summary',
+        'dq_explain',
+        'recommend_dq_tests',
+        'find_dq_gaps',
+        'dq_impact',
+        'dq_risk_catalog',
+      ],
     },
     {
       title: 'MCP (OpenMetadata)',
@@ -723,10 +735,10 @@ function AgentToolsCard() {
         <div>
           <SectionLabel>Agent tools</SectionLabel>
           <div className="text-[11px] text-slate-500 mt-0.5">
-            25 local MetaSift tools + 3 allowlisted MCP = up to 28 tools per turn
+            26 local MetaSift tools + 3 allowlisted MCP = up to 29 tools per turn
           </div>
         </div>
-        <span className="chip">28 loaded</span>
+        <span className="chip">29 loaded</span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {buckets.map((b) => (
