@@ -34,10 +34,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     On shutdown: nothing to do; SQLite and DuckDB are self-managed.
     """
-    store.get_conn()  # triggers migrations via _ensure_migrated
+    store.apply_migrations()
+    reaped = store.reap_zombie_scans()
+    if reaped:
+        logger.warning(
+            f"Reaped {reaped} zombie scan_runs row(s) left 'running' from a previous process"
+        )
     logger.info(f"MetaSift API ready · sqlite={api_settings.sqlite_path}")
     yield
     logger.info("MetaSift API shutting down")
+    # Drain the dedicated executors so stuck scan/chat workers can't hold
+    # onto file handles after uvicorn stops. `cancel_futures=True` discards
+    # anything still queued; in-flight work is allowed to return.
+    from app.api.routers.chat import _CHAT_EXECUTOR
+    from app.api.routers.scans import _SCAN_EXECUTOR
+
+    _CHAT_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+    _SCAN_EXECUTOR.shutdown(wait=False, cancel_futures=True)
 
 
 app = FastAPI(

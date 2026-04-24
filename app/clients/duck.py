@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,10 +15,41 @@ from loguru import logger
 from app.clients.openmetadata import get_http
 
 
+# DuckDB connections are not thread-safe for concurrent `execute()` calls.
+# On a shared `lru_cache`-held connection, `refresh_all()` in the scan
+# executor would hold the internal mutex for the duration of each
+# `CREATE TABLE AS SELECT` — seconds on the full catalog payload —
+# while concurrent `duck.query()` calls from analysis endpoints and agent
+# tools queued behind it. Enough queued threads drained FastAPI's anyio
+# pool and wedged the whole server.
+#
+# `cursor()` is DuckDB's documented thread-safe pattern: cursors share
+# the in-memory catalog but have independent execution contexts. Each
+# thread gets its own cursor via `threading.local()`.
+_tls = threading.local()
+
+
 @lru_cache(maxsize=1)
-def get_conn() -> duckdb.DuckDBPyConnection:
-    """Single shared in-memory DuckDB connection for the app session."""
+def _root_conn() -> duckdb.DuckDBPyConnection:
+    """The process-wide root connection. Never used for queries directly —
+    only as the parent for per-thread cursors, so the in-memory database
+    has a single persistent owner for its lifetime."""
     return duckdb.connect(":memory:")
+
+
+def get_conn() -> duckdb.DuckDBPyConnection:
+    """Return this thread's cursor into the shared in-memory DuckDB.
+
+    Cursors from the same parent connection see the same catalog but can
+    execute independently, which is what FastAPI's threaded request
+    dispatch needs. The first call in a thread creates the cursor; later
+    calls reuse it — similar to how `app.api.store.get_conn` threads SQLite.
+    """
+    cur = getattr(_tls, "cur", None)
+    if cur is None:
+        cur = _root_conn().cursor()
+        _tls.cur = cur
+    return cur
 
 
 def refresh_all() -> dict[str, int]:

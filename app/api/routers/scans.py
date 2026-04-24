@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from fastapi import APIRouter
@@ -44,6 +45,23 @@ from app.clients import duck
 from app.engines import cleaning, stewardship
 
 router = APIRouter(prefix="/scans", tags=["scans"])
+
+
+# Dedicated thread pool for engine scans. Previously scan workers grabbed
+# slots from asyncio's default executor — the same pool FastAPI uses for
+# `def` endpoints like `/health`, `/review`, `/analysis/*`. A slow LLM call
+# inside a scan could drain that pool and wedge every sync route. Sizing to
+# match the number of distinct scan kinds (6) means one-per-kind plus a
+# little headroom, with short-lived routes unaffected.
+_SCAN_EXECUTOR = ThreadPoolExecutor(max_workers=6, thread_name_prefix="scan-")
+
+# Hard upper bound for a single scan's SSE stream. Even with per-LLM-call
+# timeouts a chatty scan that makes 300 calls could still run long — this
+# caps the caller's wait at something finite. When the watchdog fires, the
+# client sees an `error` frame and the stream closes; the engine thread
+# keeps running in the dedicated pool (Python can't force-kill a thread)
+# but it can't impact the rest of the app because its pool is isolated.
+_SCAN_WATCHDOG_S = 600.0  # 10 minutes
 
 
 # ── Adapter ───────────────────────────────────────────────────────────────
@@ -128,9 +146,33 @@ async def _stream_engine_scan(
         finally:
             emit(None)
 
-    loop.run_in_executor(None, runner)
+    loop.run_in_executor(_SCAN_EXECUTOR, runner)
+    deadline = loop.time() + _SCAN_WATCHDOG_S
     while True:
-        ev = await queue.get()
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            logger.warning(f"scan {kind} (run_id={run_id}) hit watchdog timeout")
+            # Mark the row failed so the UI's 'running' state clears. The
+            # worker thread may still be looping — it'll eventually finish
+            # and its late finish_scan call is fine (harmless UPDATE).
+            try:
+                store.finish_scan(
+                    run_id,
+                    status="failed",
+                    error=f"Watchdog timeout after {int(_SCAN_WATCHDOG_S)}s",
+                )
+            except Exception:
+                logger.exception("watchdog finish_scan failed")
+            yield {
+                "type": "error",
+                "run_id": run_id,
+                "message": f"Scan exceeded {int(_SCAN_WATCHDOG_S)}s watchdog — check server logs.",
+            }
+            return
+        try:
+            ev = await asyncio.wait_for(queue.get(), timeout=remaining)
+        except TimeoutError:
+            continue  # next loop iteration trips the watchdog branch above
         if ev is None:
             return
         yield ev

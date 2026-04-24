@@ -46,10 +46,22 @@ def get_http() -> httpx.Client:
     )
 
 
+@lru_cache(maxsize=1)
+def _health_client() -> httpx.Client:
+    """Dedicated short-timeout client for the /health probe. Separate from
+    `get_http()` so an auth-token problem (which requires a valid token)
+    doesn't break unauthenticated liveness checks, and so health calls
+    reuse a persistent connection instead of TLS-handshaking every time."""
+    return httpx.Client(base_url=settings.om_host, timeout=3.0)
+
+
 def health_check() -> bool:
-    """Quick ping — used on app startup."""
+    """Quick ping — used by /health and on startup. Reuses a persistent
+    httpx.Client so repeated polls don't re-establish TCP+TLS each call,
+    and caps timeout at 3s so a slow OM never blocks the probe thread
+    for long."""
     try:
-        r = httpx.get(f"{settings.om_host}/api/v1/system/version", timeout=5.0)
+        r = _health_client().get("/api/v1/system/version")
         return r.status_code == 200
     except Exception as e:
         logger.warning(f"OpenMetadata not reachable: {e}")

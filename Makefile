@@ -77,7 +77,9 @@ clean:
 # These coexist with the Streamlit targets until Phase 8 cutover.
 
 api:
-	uv run uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
+	uv run uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000 \
+		--timeout-keep-alive 5 \
+		--limit-concurrency 128
 
 web-install:
 	cd web && npm install

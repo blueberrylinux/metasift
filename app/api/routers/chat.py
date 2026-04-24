@@ -25,6 +25,7 @@ import json
 import re
 import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from fastapi import APIRouter
@@ -44,6 +45,18 @@ from app.api.schemas import (
 )
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+# Dedicated pool so agent.stream() invocations — which can stall for tens of
+# seconds on a slow LLM — never exhaust the default asyncio executor that
+# FastAPI uses for `def` endpoints. A handful of concurrent chats is more
+# than the demo usage pattern; sizing at 4 is deliberately conservative so
+# a runaway burst can't spawn dozens of concurrent LLM sessions either.
+_CHAT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat-")
+
+# Hard upper bound for a single agent turn. The ChatOpenAI client has its
+# own 60s per-call timeout, but a tool-heavy turn can make many calls back
+# to back — this caps the full turn so the UI never waits forever.
+_CHAT_WATCHDOG_S = 180.0
 
 
 # ── Agent singleton ────────────────────────────────────────────────────────
@@ -192,10 +205,22 @@ async def stream_agent_events(
         finally:
             emit(None)  # sentinel
 
-    loop.run_in_executor(None, run)
+    loop.run_in_executor(_CHAT_EXECUTOR, run)
 
+    deadline = loop.time() + _CHAT_WATCHDOG_S
     while True:
-        ev = await queue.get()
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            logger.warning("chat stream hit watchdog timeout")
+            yield {
+                "type": "error",
+                "message": f"Agent turn exceeded {int(_CHAT_WATCHDOG_S)}s watchdog — check server logs.",
+            }
+            return
+        try:
+            ev = await asyncio.wait_for(queue.get(), timeout=remaining)
+        except TimeoutError:
+            continue
         if ev is None:
             return
         yield ev

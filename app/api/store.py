@@ -29,30 +29,70 @@ from loguru import logger
 from app.api.config import api_settings
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
-_conn: sqlite3.Connection | None = None
-_conn_lock = threading.Lock()
+_tls = threading.local()
+_migrate_lock = threading.Lock()
+_migrated = False
+
+
+def _open_conn() -> sqlite3.Connection:
+    """Open a fresh SQLite connection with MetaSift's pragmas. Callers get a
+    private handle — no sharing across threads, no internal-mutex contention,
+    no explicit-transaction bleed from one caller into another.
+
+    WAL mode + per-thread connections is SQLite's supported concurrency path:
+    many readers proceed in parallel, one writer blocks only other writers,
+    and no Python-level lock is needed to coordinate."""
+    path = api_settings.sqlite_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(
+        str(path),
+        isolation_level=None,  # autocommit; we manage explicit transactions
+        timeout=30.0,  # wait up to 30s for a writer to release before SQLITE_BUSY
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
+    return conn
 
 
 def get_conn() -> sqlite3.Connection:
-    """Return the shared SQLite connection. Ensures migrations have run once."""
-    global _conn
-    with _conn_lock:
-        if _conn is None:
-            path = api_settings.sqlite_path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            _conn = sqlite3.connect(
-                str(path),
-                check_same_thread=False,  # single-worker FastAPI — threads ok
-                isolation_level=None,  # autocommit; we manage explicit transactions
-            )
-            _conn.row_factory = sqlite3.Row
-            _conn.execute("PRAGMA foreign_keys = ON;")
-            _conn.execute("PRAGMA journal_mode = WAL;")
-            _ensure_migrated(_conn)
-        return _conn
+    """Return this thread's SQLite connection, opening one on first call.
+
+    Previously a single connection was shared across every thread in the
+    process. That guaranteed cross-thread contention on sqlite3's internal
+    mutex — a scan worker running an explicit BEGIN/COMMIT could freeze the
+    event loop while it held the connection for a slow LLM call. Per-thread
+    connections eliminate that failure mode outright.
+    """
+    apply_migrations()
+    conn = getattr(_tls, "conn", None)
+    if conn is None:
+        conn = _open_conn()
+        _tls.conn = conn
+    return conn
 
 
-def _ensure_migrated(conn: sqlite3.Connection) -> None:
+def apply_migrations() -> None:
+    """Run any pending .sql files once per process. Guarded by a lock so two
+    threads that hit a fresh process (e.g. startup + first request racing)
+    don't both try to apply the same migrations."""
+    global _migrated
+    if _migrated:
+        return
+    with _migrate_lock:
+        if _migrated:
+            return
+        conn = _open_conn()
+        try:
+            _run_migrations(conn)
+        finally:
+            conn.close()
+        _migrated = True
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
     """Apply every .sql file in migrations/ that hasn't been applied yet.
 
     Idempotent. Migration files are ordered lexicographically (001_, 002_, …).
@@ -70,12 +110,15 @@ def _ensure_migrated(conn: sqlite3.Connection) -> None:
             continue
         logger.info(f"Applying migration {mig_path.name}")
         sql = mig_path.read_text()
-        with conn:  # transaction
-            conn.executescript(sql)
-            conn.execute(
-                "INSERT OR IGNORE INTO _migrations (filename) VALUES (?)",
-                (mig_path.name,),
-            )
+        # `executescript` implicitly COMMITs any pending transaction first, so
+        # wrapping it in a BEGIN/COMMIT here would be a no-op at best and a
+        # double-commit error at worst. Autocommit-per-statement is fine for
+        # one-time schema DDL.
+        conn.executescript(sql)
+        conn.execute(
+            "INSERT OR IGNORE INTO _migrations (filename) VALUES (?)",
+            (mig_path.name,),
+        )
 
 
 def ping() -> bool:
@@ -274,12 +317,14 @@ def try_start_scan(kind: str) -> int | None:
     `scan_is_running(...)` + `start_scan(...)` leaves open when two requests
     race on the same kind.
 
-    The connection is autocommit (`isolation_level=None`, see get_conn), so a
-    plain `with conn` isn't transactional — using explicit BEGIN/COMMIT the
-    same way `append_exchange` does.
+    `BEGIN IMMEDIATE` takes the write lock up front so the SELECT sees the
+    latest committed state across per-thread connections. With `BEGIN
+    DEFERRED` (the sqlite default), two threads could both read "nothing
+    running" from their own snapshots and both INSERT — the shared-connection
+    era hid this accidentally via the Python sqlite3 mutex.
     """
     conn = get_conn()
-    conn.execute("BEGIN")
+    conn.execute("BEGIN IMMEDIATE")
     try:
         existing = conn.execute(
             "SELECT 1 FROM scan_runs WHERE kind = ? AND status = 'running' LIMIT 1",
@@ -317,6 +362,27 @@ def finish_scan(
                 run_id,
             ),
         )
+
+
+def reap_zombie_scans() -> int:
+    """Mark any `status='running'` rows that outlived the process as failed.
+
+    When uvicorn crashes or is killed mid-scan, the `scan_runs` row never
+    gets its `finished_at` / `status` update. On next boot, `try_start_scan`
+    sees it as still-running and blocks new runs of that kind until the user
+    hits the DB manually. This reaper sweeps those zombies at startup so the
+    first post-restart request works.
+
+    Returns the number of rows reaped — used by callers (lifespan) to log.
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE scan_runs SET finished_at = ?, status = 'failed', "
+            "error = 'Reaped on startup — process died before scan finished' "
+            "WHERE status = 'running'",
+            (datetime.now(UTC).isoformat(),),
+        )
+        return cur.rowcount or 0
 
 
 def last_scan(kind: str) -> dict[str, Any] | None:
