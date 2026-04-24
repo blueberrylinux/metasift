@@ -70,7 +70,10 @@ export function PageHeader({
         {chips.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {chips.map((c, i) => (
-              <span key={i} className={TONE_TO_CHIP_CLS[c.tone ?? 'slate']}>
+              <span
+                key={`${c.label}-${c.tone ?? 'slate'}-${i}`}
+                className={TONE_TO_CHIP_CLS[c.tone ?? 'slate']}
+              >
                 {c.label}
               </span>
             ))}

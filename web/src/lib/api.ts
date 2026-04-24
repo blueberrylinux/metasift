@@ -284,6 +284,10 @@ export async function streamChat(
         if (frame) onFrame(frame);
       }
     }
+    // Flush any bytes the decoder is holding for an incomplete multi-byte
+    // UTF-8 sequence. Without this, trailing non-ASCII characters at EOF
+    // can be silently dropped (matters for e.g. `✓` in final frames).
+    buf += decoder.decode();
     // Flush any trailing block if the server closed without a final separator.
     if (buf.trim()) {
       const frame = parseSSEBlock(buf);
@@ -696,6 +700,8 @@ export async function streamScan(
         if (frame) onFrame(frame);
       }
     }
+    // Flush decoder for incomplete trailing multi-byte sequences.
+    buf += decoder.decode();
     if (buf.trim()) {
       const frame = parseSSEBlockScan(buf);
       if (frame) onFrame(frame);

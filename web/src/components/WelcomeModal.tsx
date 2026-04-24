@@ -8,9 +8,11 @@
  * the TopBar's "Welcome guide" button re-opens it on demand.
  */
 
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { getHealth } from '../lib/api';
 import { LogoM } from './LogoM';
 
 interface Props {
@@ -92,6 +94,10 @@ const TONE_CLS: Record<Feature['tone'], string> = {
 export function WelcomeModal({ onClose }: Props) {
   const nav = useNavigate();
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  // Share the `['health']` query with Sidebar so we don't fire an extra
+  // /health call when the modal opens — the first /health caller seeds the
+  // cache; everyone else reads the same data.
+  const health = useQuery({ queryKey: ['health'], queryFn: getHealth, retry: false });
 
   // Escape-to-close + focus trap. Not using a modal library because the rest
   // of the app is tiny and Radix/HeadlessUI would be a sledgehammer — but we
@@ -268,17 +274,26 @@ export function WelcomeModal({ onClose }: Props) {
           </div>
         </div>
 
-        {/* Footer */}
+        {/* Footer — status dots reflect the real /health probe so first-run
+            users can see whether OM + LLM are actually reachable before they
+            try a suggested question. While the probe is in flight we show
+            "Checking…" with a neutral gray dot. */}
         <div className="relative px-8 pb-6 flex items-center justify-between border-t border-slate-800 pt-5 bg-slate-950/40">
           <div className="flex items-center gap-4 text-[11px] text-slate-500">
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot" />
-              OpenMetadata connected
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot" />
-              LLM ready
-            </span>
+            <StatusDot
+              loading={health.isLoading}
+              ok={health.data?.om ?? false}
+              labelOk="OpenMetadata connected"
+              labelBad="OpenMetadata unreachable"
+              labelLoading="Checking OpenMetadata…"
+            />
+            <StatusDot
+              loading={health.isLoading}
+              ok={health.data?.llm ?? false}
+              labelOk="LLM ready"
+              labelBad="LLM not configured"
+              labelLoading="Checking LLM…"
+            />
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -300,5 +315,28 @@ export function WelcomeModal({ onClose }: Props) {
         </div>
       </div>
     </div>
+  );
+}
+
+function StatusDot({
+  loading,
+  ok,
+  labelOk,
+  labelBad,
+  labelLoading,
+}: {
+  loading: boolean;
+  ok: boolean;
+  labelOk: string;
+  labelBad: string;
+  labelLoading: string;
+}) {
+  const tone = loading ? 'bg-slate-500' : ok ? 'bg-emerald-400' : 'bg-red-400';
+  const label = loading ? labelLoading : ok ? labelOk : labelBad;
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={`w-1.5 h-1.5 rounded-full pulse-dot ${tone}`} />
+      {label}
+    </span>
   );
 }

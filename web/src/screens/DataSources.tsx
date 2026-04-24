@@ -17,7 +17,7 @@ import { PageHeader } from '../components/PageHeader';
 import { Skeleton } from '../components/Skeleton';
 import { ApiError, type DataSourceRow, getDataSources } from '../lib/api';
 
-const KIND_ORDER = ['database', 'dashboard', 'messaging', 'pipeline'] as const;
+const KIND_ORDER = ['database', 'dashboard', 'messaging', 'pipeline', 'other'] as const;
 type Kind = (typeof KIND_ORDER)[number];
 
 const KIND_LABELS: Record<Kind, { label: string; blurb: string }> = {
@@ -36,6 +36,10 @@ const KIND_LABELS: Record<Kind, { label: string; blurb: string }> = {
   pipeline: {
     label: 'Pipelines',
     blurb: 'Orchestrators (Airflow, dbt) whose DAGs/models show up as cataloged entities.',
+  },
+  other: {
+    label: 'Other',
+    blurb: 'Services whose kind the UI doesn\'t have a bucket for yet — check server logs.',
   },
 };
 
@@ -157,7 +161,16 @@ function KindSection({ kind, rows }: { kind: Kind; rows: DataSourceRow[] }) {
 function groupByKind(rows: DataSourceRow[]): Partial<Record<Kind, DataSourceRow[]>> {
   const out: Partial<Record<Kind, DataSourceRow[]>> = {};
   for (const r of rows) {
-    const k = KIND_ORDER.includes(r.kind as Kind) ? (r.kind as Kind) : 'database';
+    const known = KIND_ORDER.includes(r.kind as Kind);
+    if (!known) {
+      // Surface the unrecognized kind so a new OM service category (or a
+      // typo on the backend) doesn't silently disappear into the Databases
+      // bucket. Warns once per unique kind to avoid console spam.
+      console.warn(
+        `[DataSources] unknown service kind "${r.kind}" for ${r.service} — grouping under "Other".`,
+      );
+    }
+    const k: Kind = known ? (r.kind as Kind) : 'other';
     (out[k] ||= []).push(r);
   }
   return out;

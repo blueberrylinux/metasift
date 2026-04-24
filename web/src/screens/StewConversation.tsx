@@ -252,6 +252,11 @@ export function StewConversation() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['conversations'] });
+      // Also refetch this conversation's detail so the persisted title
+      // reflects what the server actually stored (e.g. after the validator
+      // trims whitespace). Without this the detail cache can stay on the
+      // optimistic value if server normalization changed it.
+      qc.invalidateQueries({ queryKey: ['conversation', conversationId] });
     },
   });
 

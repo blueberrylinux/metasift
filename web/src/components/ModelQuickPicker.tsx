@@ -105,9 +105,13 @@ export function ModelQuickPicker() {
       {apply.isPending && (
         <span className="ml-2 font-mono text-slate-500 shrink-0 text-[10px]">saving…</span>
       )}
-      {apply.error instanceof ApiError ? (
+      {apply.error ? (
         <span className="ml-2 font-mono text-red-300 shrink-0 truncate text-[10px]">
-          {apply.error.message}
+          {apply.error instanceof ApiError
+            ? apply.error.message
+            : apply.error instanceof Error
+              ? apply.error.message
+              : String(apply.error)}
         </span>
       ) : null}
 

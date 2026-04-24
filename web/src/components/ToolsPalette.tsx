@@ -20,7 +20,7 @@ export function ToolsPalette({
 }: {
   open: boolean;
   onClose: () => void;
-  onPick: (prompt: string, tool: StewTool) => void;
+  onPick: (prompt: string, tool?: StewTool) => void;
 }) {
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState(0);
@@ -81,7 +81,10 @@ export function ToolsPalette({
       onClose();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setCursor((i) => Math.min(filtered.length - 1, i + 1));
+      // Clamp the upper bound to 0 too — when `filtered` is empty,
+      // `filtered.length - 1` is -1 and an unclamped Math.min would
+      // leave cursor pointing before the list.
+      setCursor((i) => Math.max(0, Math.min(filtered.length - 1, i + 1)));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setCursor((i) => Math.max(0, i - 1));
@@ -129,7 +132,7 @@ export function ToolsPalette({
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search Stew's tools… (26 local + 3 MCP)"
+            placeholder={`Search Stew's tools… (${STEW_TOOLS.length} local)`}
             className="flex-1 bg-transparent outline-none text-[13px] text-slate-100 placeholder:text-slate-600"
           />
           <kbd className="text-[9px] font-mono text-slate-600 border border-slate-800 px-1 py-0.5 rounded">
