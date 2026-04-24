@@ -42,6 +42,7 @@ from app.api.schemas import (
     ConversationSummary,
     CreateConversationRequest,
     PersistedMessage,
+    RenameConversationRequest,
 )
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -263,6 +264,30 @@ def get_conversation(conversation_id: str) -> ConversationDetailResponse:
         conversation=_row_to_summary(detail["conversation"]),
         messages=[PersistedMessage.model_validate(m) for m in detail["messages"]],
     )
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
+def rename_conversation(
+    conversation_id: str, req: RenameConversationRequest
+) -> ConversationSummary:
+    """Rename a conversation. An empty / whitespace-only title becomes NULL
+    so the list falls back to the 'Untitled conversation' placeholder."""
+    renamed = store.rename_conversation(conversation_id, req.title)
+    if not renamed:
+        raise errors.conversation_not_found(conversation_id)
+    detail = store.get_conversation(conversation_id)
+    assert detail is not None  # guaranteed by the rename returning True
+    return _row_to_summary(detail["conversation"])
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+def delete_conversation(conversation_id: str) -> None:
+    """Delete a conversation and its messages. 204 on success, 404 if the id
+    was already gone — messages cascade via the FK on `messages.conversation_id`."""
+    deleted = store.delete_conversation(conversation_id)
+    if not deleted:
+        raise errors.conversation_not_found(conversation_id)
+    return None
 
 
 # ── Streaming chat ────────────────────────────────────────────────────────

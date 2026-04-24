@@ -116,6 +116,18 @@ class CreateConversationRequest(BaseModel):
     title: str | None = None
 
 
+class RenameConversationRequest(BaseModel):
+    """Body for PATCH /chat/conversations/{id}. Empty string clears the
+    title (useful if the user deletes the inline-edit text)."""
+
+    title: str = Field(max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        return v.strip()
+
+
 class ConversationSummary(BaseModel):
     """Row in GET /chat/conversations — no messages, keeps the list cheap."""
 

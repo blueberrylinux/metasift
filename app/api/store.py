@@ -145,6 +145,40 @@ def new_conversation(title: str | None = None) -> str:
     return convo_id
 
 
+def rename_conversation(convo_id: str, title: str | None) -> bool:
+    """Rename a conversation. Empty string becomes NULL so the list falls
+    back to the 'Untitled conversation' placeholder. Bumps updated_at so
+    the row floats to the top of the recents list after a rename.
+
+    Uses `datetime.now(UTC).isoformat()` — NOT SQLite's `CURRENT_TIMESTAMP`
+    — because the rest of the codebase writes ISO-8601 with `T` + `Z`
+    (e.g. `2026-04-24T17:19:55.308Z`). `CURRENT_TIMESTAMP` writes the
+    space-separated SQLite default (`2026-04-24 17:19:55`), and a
+    lexicographic `ORDER BY updated_at DESC` on TEXT sorts `space` (0x20)
+    before `T` (0x54) — so rows renamed with CURRENT_TIMESTAMP would sink
+    below every message-append-updated row. Using isoformat keeps the
+    ordering honest.
+    """
+    normalized = title if title else None
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+            (normalized, datetime.now(UTC).isoformat(), convo_id),
+        )
+    return cur.rowcount > 0
+
+
+def delete_conversation(convo_id: str) -> bool:
+    """Delete a conversation and its messages. Returns True if a row was removed.
+
+    Relies on the `ON DELETE CASCADE` on messages.conversation_id — no explicit
+    message delete needed. PRAGMA foreign_keys is set to ON per connection.
+    """
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM conversations WHERE id = ?", (convo_id,))
+    return cur.rowcount > 0
+
+
 def list_conversations(limit: int = 50) -> list[dict[str, Any]]:
     """Most recent conversations first."""
     rows = (

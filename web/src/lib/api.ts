@@ -189,6 +189,24 @@ export function getConversation(id: string): Promise<ConversationDetail> {
   return getJSON<ConversationDetail>(`/chat/conversations/${encodeURIComponent(id)}`);
 }
 
+export async function deleteConversation(id: string): Promise<void> {
+  const r = await fetch(`${API}/chat/conversations/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (r.ok) return;
+  // Parse the error body into an ApiError so useMutation can surface the code.
+  await parseOrThrow<void>(r, `/chat/conversations/${id}`);
+}
+
+export async function renameConversation(id: string, title: string): Promise<ConversationSummary> {
+  const r = await fetch(`${API}/chat/conversations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+  return parseOrThrow<ConversationSummary>(r, `/chat/conversations/${id}`);
+}
+
 // ── SSE frames ─────────────────────────────────────────────────────────────
 
 export type ChatFrame =

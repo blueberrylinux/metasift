@@ -1309,9 +1309,13 @@ def apply_pii_tag(table_fqn: str, column_name: str, tag_fqn: str) -> str:
 def run_sql(query: str) -> str:
     """Run arbitrary read-only SQL against the DuckDB metadata store.
 
-    Available tables:
+    Available tables (all populated by `refresh_metadata`):
       - `om_tables` (fullyQualifiedName, description, columns, tags, owners, profile)
       - `om_columns` (table_fqn, name, dataType, description, tags)
+      - `om_lineage` (source_fqn, target_fqn)
+      - `om_test_cases` (id, name, table_fqn, column_name, test_definition_name,
+        status, result_message, result_timestamp, failed_rows_sample, source)
+      - `om_services` (id, name, fqn, kind, service_type, description)
 
     Use for ad-hoc questions not covered by the other tools. Read-only —
     do NOT use for INSERT/UPDATE/DELETE. Returns up to 50 rows as a markdown table.
