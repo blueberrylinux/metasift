@@ -10,6 +10,7 @@
 
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import { DataSources } from './screens/DataSources';
 import { DQ } from './screens/DQ';
 import { Report } from './screens/Report';
 import { Review } from './screens/Review';
@@ -25,6 +26,7 @@ export function App() {
       <Route path="/chat" element={<Stew />} />
       <Route path="/chat/:conversationId" element={<StewConversation />} />
       <Route path="/review" element={<Review />} />
+      <Route path="/data-sources" element={<DataSources />} />
       <Route path="/viz" element={<Viz />} />
       <Route path="/dq" element={<DQ />} />
       <Route path="/report" element={<Report />} />

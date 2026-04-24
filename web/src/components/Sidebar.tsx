@@ -32,7 +32,7 @@ import { NavIcon, type NavIconKind } from './NavIcon';
 import { ScoreRing } from './ScoreRing';
 import { Skeleton, SkeletonRing } from './Skeleton';
 
-export type NavKey = 'chat' | 'review' | 'viz' | 'dq' | 'report' | 'llm';
+export type NavKey = 'chat' | 'review' | 'sources' | 'viz' | 'dq' | 'report' | 'llm';
 
 interface NavItem {
   key: NavKey;
@@ -45,6 +45,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { key: 'chat', label: 'Stew', desc: 'Metadata wizard', to: '/chat', icon: 'chat' },
   { key: 'review', label: 'Review queue', desc: 'Accept · edit · reject', to: '/review', icon: 'queue' },
+  { key: 'sources', label: 'Data sources', desc: 'Connected services', to: '/data-sources', icon: 'sources' },
   { key: 'viz', label: 'Visualizations', desc: '11 tabs', to: '/viz', icon: 'viz' },
   { key: 'dq', label: 'Data quality', desc: 'Failures · gaps · risk', to: '/dq', icon: 'dq' },
   { key: 'report', label: 'Executive report', desc: 'Markdown export', to: '/report', icon: 'doc' },

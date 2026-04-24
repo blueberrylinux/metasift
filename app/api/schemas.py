@@ -59,6 +59,25 @@ class CoverageResponse(BaseModel):
     rows: list[CoverageRow]
 
 
+class DataSourceRow(BaseModel):
+    """One service connected to OpenMetadata, with its ingested-table count.
+
+    `type` is the connector flavour (`Mysql`, `Postgres`, `Tableau`, …) the
+    service was registered with. `tables` is derived from `om_tables` —
+    services whose kind isn't `database` will always show 0 since only
+    database connectors produce tables.
+    """
+
+    service: str
+    kind: str
+    type: str | None = None
+    tables: int
+
+
+class DataSourcesResponse(BaseModel):
+    rows: list[DataSourceRow]
+
+
 class RefreshResponse(BaseModel):
     """Payload returned after a synchronous `/analysis/refresh`. Counts mirror
     `duck.refresh_all()`; `run_id` ties back to the `scan_runs` row we logged

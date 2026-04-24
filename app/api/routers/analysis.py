@@ -29,6 +29,8 @@ from app.api.schemas import (
     CompositeScore,
     CoverageResponse,
     CoverageRow,
+    DataSourceRow,
+    DataSourcesResponse,
     RefreshResponse,
 )
 from app.clients import duck
@@ -70,6 +72,22 @@ def get_coverage(duck_ok: DuckOk, schema: str | None = None) -> CoverageResponse
     records = df.to_dict(orient="records")
     rows = [CoverageRow.model_validate(r) for r in records]
     return CoverageResponse(rows=rows)
+
+
+@router.get("/data-sources", response_model=DataSourcesResponse)
+def get_data_sources(duck_ok: DuckOk) -> DataSourcesResponse:
+    """List every service registered in OpenMetadata with its table count.
+
+    Groups by service kind (database / dashboard / messaging / pipeline) and
+    joins database services against `om_tables` for a rough "how much has
+    actually been ingested" number. Mirrors what the `list_services` agent
+    tool returns, for direct UI rendering."""
+    if not duck_ok:
+        raise errors.no_metadata_loaded()
+    df = analysis.service_coverage()
+    records = df.to_dict(orient="records")
+    rows = [DataSourceRow.model_validate(r) for r in records]
+    return DataSourcesResponse(rows=rows)
 
 
 @router.post("/refresh", response_model=RefreshResponse)

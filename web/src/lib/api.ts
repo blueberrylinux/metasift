@@ -102,6 +102,17 @@ export interface RefreshResponse {
   duration_ms: number;
 }
 
+export interface DataSourceRow {
+  service: string;
+  kind: string;
+  type: string | null;
+  tables: number;
+}
+
+export interface DataSourcesResponse {
+  rows: DataSourceRow[];
+}
+
 export function getComposite(): Promise<CompositeScore> {
   return getJSON<CompositeScore>('/analysis/composite');
 }
@@ -109,6 +120,10 @@ export function getComposite(): Promise<CompositeScore> {
 export function getCoverage(schema?: string): Promise<CoverageResponse> {
   const qs = schema ? `?schema=${encodeURIComponent(schema)}` : '';
   return getJSON<CoverageResponse>(`/analysis/coverage${qs}`);
+}
+
+export function getDataSources(): Promise<DataSourcesResponse> {
+  return getJSON<DataSourcesResponse>('/analysis/data-sources');
 }
 
 export function postRefresh(): Promise<RefreshResponse> {

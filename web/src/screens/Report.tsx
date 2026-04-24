@@ -11,7 +11,6 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
-import { Link } from 'react-router-dom';
 
 import { AppLayout } from '../components/AppLayout';
 import { EmptyState } from '../components/EmptyState';
@@ -94,15 +93,7 @@ export function Report() {
             icon="↻"
             title="No metadata loaded yet"
             body="The executive report pulls from every DuckDB surface (coverage, ownership, lineage, DQ). There's nothing to summarise yet."
-            hint={
-              <>
-                Hit Refresh metadata in the sidebar — or ask{' '}
-                <Link to="/chat" className="underline text-emerald-300">
-                  Stew
-                </Link>{' '}
-                to auto-refresh for you.
-              </>
-            }
+            hint="Hit Refresh metadata in the sidebar to pull the catalog into MetaSift."
           />
         ) : q.error ? (
           <EmptyState

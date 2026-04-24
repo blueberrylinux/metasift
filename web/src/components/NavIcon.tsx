@@ -4,7 +4,7 @@
  * pulls from the design tokens (emerald-400 / slate-500).
  */
 
-export type NavIconKind = 'chat' | 'queue' | 'viz' | 'dq' | 'doc' | 'llm';
+export type NavIconKind = 'chat' | 'queue' | 'viz' | 'dq' | 'doc' | 'llm' | 'sources';
 
 export function NavIcon({ kind, active }: { kind: NavIconKind; active: boolean }) {
   const color = active ? '#34d399' : '#64748b';
@@ -64,6 +64,15 @@ export function NavIcon({ kind, active }: { kind: NavIconKind; active: boolean }
           <path d="M12 2a4 4 0 0 1 4 4v1h1a3 3 0 0 1 3 3v1a3 3 0 0 1-1 2.2V17a4 4 0 0 1-4 4h-6a4 4 0 0 1-4-4v-3.8A3 3 0 0 1 4 11v-1a3 3 0 0 1 3-3h1V6a4 4 0 0 1 4-4z" />
           <circle cx="9" cy="12" r="1" />
           <circle cx="15" cy="12" r="1" />
+        </svg>
+      );
+    case 'sources':
+      // Stacked database cylinders — the classic "connected data source" glyph.
+      return (
+        <svg {...common} viewBox="0 0 24 24">
+          <ellipse cx="12" cy="5" rx="8" ry="2.5" />
+          <path d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5" />
+          <path d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6" />
         </svg>
       );
   }
