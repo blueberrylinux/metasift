@@ -81,6 +81,24 @@ def list_schemas() -> str:
 
 
 @tool
+def list_services() -> str:
+    """List every data source connected to OpenMetadata, grouped by kind.
+
+    Use when the user asks about data sources, connectors, services, or
+    _"what's wired into OpenMetadata"_. Covers database, dashboard,
+    messaging, and pipeline services. Returns a markdown table with the
+    service name, kind, connector type, and how many tables each
+    database service has actually ingested.
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = analysis.service_coverage()
+    if df.empty:
+        return "No services registered in OpenMetadata."
+    return df.to_markdown(index=False)
+
+
+@tool
 def list_tables(schema_name: str = "") -> str:
     """List tables in the catalog, optionally filtered by schema name.
 
@@ -291,7 +309,8 @@ Accuracy and coverage get equal weight because wrong docs hurt as much as missin
    and next-step recommendations.
 
 4. **Interface** (`app/engines/agent.py`) — That's me, Stew. LangChain agent
-   wired to 11 tools over the other engines. Chat in natural language.""",
+   wired to 26 local tools + 3 read-only MCP tools over the other engines.
+   Chat in natural language.""",
     "architecture": """**Stack:**
 
 - **OpenMetadata 1.9.4** — Docker Compose stack (MySQL + Elasticsearch + server)
@@ -352,6 +371,7 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
     "capabilities": """**Here's what I can actually do for you:**
 
 **Discovery**
+- See which data sources (database / dashboard / messaging / pipeline services) are connected to OpenMetadata
 - See what databases and schemas exist in your catalog
 - List tables, optionally filtered to a specific schema
 
@@ -1313,6 +1333,7 @@ def run_sql(query: str) -> str:
 # ── Registry ───────────────────────────────────────────────────────────────────
 
 ALL_TOOLS = [
+    list_services,
     list_schemas,
     list_tables,
     documentation_coverage,

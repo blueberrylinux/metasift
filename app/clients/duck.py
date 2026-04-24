@@ -104,6 +104,18 @@ def refresh_all() -> dict[str, int]:
     conn.execute("CREATE OR REPLACE TABLE om_test_cases AS SELECT * FROM tests_df")
     counts["om_test_cases"] = len(tests_df)
 
+    # Services — what data sources are actually connected to OM.
+    # Force VARCHAR dtypes even on empty responses so the join in
+    # analysis.service_coverage (om_services.name = om_tables... split_part)
+    # doesn't hit an INT/VARCHAR type mismatch when no services come back.
+    service_rows = _fetch_services(http)
+    _service_cols = ["id", "name", "fqn", "kind", "service_type", "description"]
+    services_df = pd.DataFrame(service_rows, columns=_service_cols).astype(
+        {c: "string" for c in _service_cols}
+    )
+    conn.execute("CREATE OR REPLACE TABLE om_services AS SELECT * FROM services_df")
+    counts["om_services"] = len(services_df)
+
     logger.info(f"DuckDB refresh complete: {counts}")
     return counts
 
@@ -252,6 +264,46 @@ def _load_synthetic_test_cases() -> list[dict]:
     for item in raw:
         rows.append({col: item.get(col) for col in _TEST_CASE_COLUMNS})
     logger.info(f"Loaded {len(rows)} DQ test cases from synthetic fixture.")
+    return rows
+
+
+# OpenMetadata exposes one endpoint per service category. The four below cover
+# every connector type the seed catalog uses; others return empty lists so
+# hitting them is cheap. Failures per-kind fail soft so one 401/404 doesn't
+# break the whole refresh.
+_SERVICE_KINDS: list[tuple[str, str]] = [
+    ("database", "/v1/services/databaseServices"),
+    ("dashboard", "/v1/services/dashboardServices"),
+    ("messaging", "/v1/services/messagingServices"),
+    ("pipeline", "/v1/services/pipelineServices"),
+]
+
+
+def _fetch_services(http) -> list[dict]:
+    """Pull every service registered in OpenMetadata, tagged by kind.
+
+    Each entry is normalized to `{id, name, fqn, kind, service_type,
+    description}` so downstream SQL doesn't need to know which endpoint
+    produced which row.
+    """
+    rows: list[dict] = []
+    for kind, path in _SERVICE_KINDS:
+        try:
+            raw = _fetch_paginated(http, path)
+        except Exception as e:
+            logger.warning(f"service fetch failed for {kind}: {e}")
+            continue
+        for s in raw:
+            rows.append(
+                {
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "fqn": s.get("fullyQualifiedName"),
+                    "kind": kind,
+                    "service_type": s.get("serviceType"),
+                    "description": s.get("description"),
+                }
+            )
     return rows
 
 
