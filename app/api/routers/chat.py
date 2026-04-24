@@ -137,12 +137,18 @@ async def stream_agent_events(
     `error` on uncaught exception. The sync `agent.stream()` call is pushed off
     the event loop with `run_in_executor`; events cross the thread boundary
     through `loop.call_soon_threadsafe` into an `asyncio.Queue` consumed here.
+
+    A `threading.Event` plumbs cancellation from the async consumer into the
+    worker thread — we can't preempt `agent.stream()` mid-LLM-call, but we
+    check between chunks so watchdog timeouts and client disconnects don't
+    leave chat workers running unbounded on `_CHAT_EXECUTOR`.
     """
     agent = _get_agent()
     lc_messages = _history_to_lc(history) + [HumanMessage(content=question)]
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    cancel_event = threading.Event()
 
     def emit(ev: dict[str, Any] | None) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, ev)
@@ -159,6 +165,9 @@ async def stream_agent_events(
                 config={"recursion_limit": 15},
                 stream_mode="updates",
             ):
+                if cancel_event.is_set():
+                    logger.info("chat worker cancelled mid-stream")
+                    return
                 for node_data in chunk.values():
                     if not isinstance(node_data, dict):
                         continue
@@ -197,34 +206,53 @@ async def stream_agent_events(
                                 else:
                                     # AIMessage with text and no tool_calls = final
                                     final_text = text
+            if cancel_event.is_set():
+                return
             # Parity with app/main.py::1462-1470: if the graph ended without a
             # text-only AIMessage, surface the last tool result so the UI isn't blank.
             emit({"type": "final", "text": final_text or last_tool_content or ""})
-        except Exception as e:
+        except Exception:
+            # Log the full exception server-side; emit a generic message to the
+            # client so internal details (stack fragments, tool output, db rows,
+            # etc.) don't leak over SSE. The client renders the message as-is
+            # in the chat bubble, so anything here must be safe for display.
             logger.exception("agent stream failed")
-            emit({"type": "error", "message": str(e)})
+            emit(
+                {
+                    "type": "error",
+                    "code": "agent_stream_failed",
+                    "message": "Stew hit an error while answering. Check server logs for details.",
+                }
+            )
         finally:
             emit(None)  # sentinel
 
     loop.run_in_executor(_CHAT_EXECUTOR, run)
 
-    deadline = loop.time() + _CHAT_WATCHDOG_S
-    while True:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            logger.warning("chat stream hit watchdog timeout")
-            yield {
-                "type": "error",
-                "message": f"Agent turn exceeded {int(_CHAT_WATCHDOG_S)}s watchdog — check server logs.",
-            }
-            return
-        try:
-            ev = await asyncio.wait_for(queue.get(), timeout=remaining)
-        except TimeoutError:
-            continue
-        if ev is None:
-            return
-        yield ev
+    try:
+        deadline = loop.time() + _CHAT_WATCHDOG_S
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.warning("chat stream hit watchdog timeout")
+                yield {
+                    "type": "error",
+                    "code": "watchdog_timeout",
+                    "message": f"Agent turn exceeded {int(_CHAT_WATCHDOG_S)}s watchdog — check server logs.",
+                }
+                return
+            try:
+                ev = await asyncio.wait_for(queue.get(), timeout=remaining)
+            except TimeoutError:
+                continue
+            if ev is None:
+                return
+            yield ev
+    finally:
+        # Client disconnect, watchdog return, or upstream cancellation all
+        # exit through here — signal the worker to abort its next iteration
+        # so the executor doesn't accumulate hung chat workers.
+        cancel_event.set()
 
 
 # ── Conversation CRUD ─────────────────────────────────────────────────────
@@ -240,7 +268,16 @@ def create_conversation(req: CreateConversationRequest) -> ConversationSummary:
     /chat/stream with this id."""
     convo_id = store.new_conversation(title=req.title)
     detail = store.get_conversation(convo_id)
-    assert detail is not None  # just created
+    # Race-theoretical: another worker deleted the row between insert and
+    # read. Prefer a typed 5xx over `assert` — asserts disappear under
+    # `python -O` and `AssertionError` surfaces as an opaque 500 otherwise.
+    if detail is None:
+        logger.error(f"create_conversation: row vanished immediately after insert (id={convo_id})")
+        raise errors.ApiError(
+            errors.ErrorCode.INTERNAL_ERROR,
+            "Conversation created but could not be read back. Retry.",
+            status_code=500,
+        )
     return _row_to_summary(detail["conversation"])
 
 
@@ -276,7 +313,18 @@ def rename_conversation(
     if not renamed:
         raise errors.conversation_not_found(conversation_id)
     detail = store.get_conversation(conversation_id)
-    assert detail is not None  # guaranteed by the rename returning True
+    # Race-theoretical: another worker deleted the row between UPDATE and
+    # read. Surface as a typed 5xx so the UI can show a retry rather than
+    # an opaque 500.
+    if detail is None:
+        logger.error(
+            f"rename_conversation: row vanished immediately after update (id={conversation_id})"
+        )
+        raise errors.ApiError(
+            errors.ErrorCode.INTERNAL_ERROR,
+            "Conversation was renamed but could not be read back. Retry.",
+            status_code=500,
+        )
     return _row_to_summary(detail["conversation"])
 
 
@@ -336,6 +384,7 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
         calls_by_id: dict[str, dict[str, Any]] = {}
         results_by_id: dict[str, str] = {}
         final_text: str = ""
+        final_ev: dict[str, Any] | None = None
         errored = False
 
         async for ev in stream_agent_events(question, history):
@@ -345,7 +394,12 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
             elif etype == "tool_result":
                 results_by_id[ev["id"]] = ev["content"]
             elif etype == "final":
+                # Buffer the final frame — we persist BEFORE telling the
+                # client the turn is done so a save failure can be surfaced
+                # as an error instead of a silently-lost message.
                 final_text = ev["text"]
+                final_ev = ev
+                continue
             elif etype == "error":
                 errored = True
             yield {"event": etype, "data": json.dumps(ev)}
@@ -353,6 +407,7 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
         # Persist only if a conversation is attached AND the stream succeeded.
         # Failed runs leave no trace — retrying them repopulates cleanly.
         # Empty `final_text` still persists so the user's question is recorded.
+        persist_failed = False
         if convo_id and not errored:
             traces = [
                 {
@@ -371,5 +426,23 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
                 )
             except Exception as e:
                 logger.exception(f"failed to persist conversation {convo_id}: {e}")
+                persist_failed = True
+
+        # Only now tell the client what happened. If persistence failed we
+        # surface that as a terminal error so the UI doesn't silently claim
+        # success for a turn that isn't durably stored.
+        if persist_failed:
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {
+                        "type": "error",
+                        "code": "persist_failed",
+                        "message": "Answer was generated but could not be saved. Check server logs.",
+                    }
+                ),
+            }
+        elif final_ev is not None:
+            yield {"event": "final", "data": json.dumps(final_ev)}
 
     return EventSourceResponse(events())
