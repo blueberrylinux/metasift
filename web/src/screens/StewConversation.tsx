@@ -11,14 +11,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
 
 import { AppLayout } from '../components/AppLayout';
 import { Composer } from '../components/Composer';
+import { EditableTitle } from '../components/EditableTitle';
 import { EmptyState } from '../components/EmptyState';
 import { MessageList, type InFlightState } from '../components/MessageList';
 import { PageHeader } from '../components/PageHeader';
 import { Skeleton } from '../components/Skeleton';
-import { ApiError, getConversation, streamChat } from '../lib/api';
+import {
+  ApiError,
+  type ConversationDetail,
+  getConversation,
+  renameConversation,
+  streamChat,
+} from '../lib/api';
 
 interface LocationState {
   initial_question?: string;
@@ -36,14 +44,85 @@ export function StewConversation() {
 
   const [inFlight, setInFlight] = useState<InFlightState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const autoSentRef = useRef(false);
+  // `stickRef` holds the authoritative "should I follow new content?" flag —
+  // a ref so the ResizeObserver callback always reads the latest value
+  // without re-subscribing. `atBottom` mirrors it for the pill's render.
+  const stickRef = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
 
-  // Keep the view glued to the bottom as new content streams or renders.
+  // Streamlit-style auto-scroll: whenever the rendered content grows, if the
+  // user was at the bottom before the growth, keep them there. If they'd
+  // scrolled up to re-read something, leave them alone and let the pill
+  // tell them there's more below. The observer has to watch the INNER
+  // content node, not the scroller — the scroller's own bounding box
+  // doesn't change when `scrollHeight` grows, so a ResizeObserver on the
+  // scroller silently ignores streamed messages.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [detail.data?.messages.length, inFlight]);
+    const scroller = scrollRef.current;
+    const content = contentRef.current;
+    if (!scroller || !content) return;
+    const BOTTOM_THRESHOLD_PX = 80;
+
+    const measureStick = () => {
+      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      const near = distance < BOTTOM_THRESHOLD_PX;
+      stickRef.current = near;
+      setAtBottom(near);
+    };
+
+    const pinIfSticky = () => {
+      if (stickRef.current) scroller.scrollTop = scroller.scrollHeight;
+    };
+
+    measureStick();
+    scroller.addEventListener('scroll', measureStick, { passive: true });
+    const ro = new ResizeObserver(() => {
+      pinIfSticky();
+      // A follow-up rAF covers async layout that finalizes on the next
+      // frame (markdown fonts, tool-trace expanders). After re-pinning we
+      // re-measure so `atBottom` reflects reality.
+      requestAnimationFrame(() => {
+        pinIfSticky();
+        measureStick();
+      });
+    });
+    ro.observe(content);
+
+    return () => {
+      scroller.removeEventListener('scroll', measureStick);
+      ro.disconnect();
+    };
+  }, []);
+
+  // Initial snap so navigating into an existing conversation lands on the
+  // newest turn instead of the oldest.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || !detail.data) return;
+    scroller.scrollTop = scroller.scrollHeight;
+    stickRef.current = true;
+    setAtBottom(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, detail.data?.messages.length === 0 ? 'empty' : 'loaded']);
+
+  const scrollToBottom = useCallback((smooth = true) => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({
+      top: scroller.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto',
+    });
+    stickRef.current = true;
+    setAtBottom(true);
+  }, []);
+
+  // User clicked send → force-stick + scroll. This is an explicit "show me
+  // what's happening" intent, so override any prior manual scroll-up.
+  useEffect(() => {
+    if (inFlight?.question) scrollToBottom(true);
+  }, [inFlight?.question, scrollToBottom]);
 
   // Abort controller lives across re-renders so we can cancel an in-flight
   // stream on unmount (route change, tab close) or when a new send fires
@@ -146,21 +225,70 @@ export function StewConversation() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.data, location.state]);
 
-  const title = detail.data?.conversation.title || 'Untitled conversation';
+  const persistedTitle = detail.data?.conversation.title ?? null;
+  const displayTitle = persistedTitle || 'Untitled conversation';
   const messageCount = detail.data ? `${detail.data.messages.length} messages` : '';
+
+  const rename = useMutation({
+    mutationFn: (next: string) => renameConversation(conversationId, next),
+    onMutate: async (next) => {
+      await qc.cancelQueries({ queryKey: ['conversation', conversationId] });
+      const prev = qc.getQueryData<ConversationDetail>(['conversation', conversationId]);
+      if (prev) {
+        qc.setQueryData<ConversationDetail>(['conversation', conversationId], {
+          ...prev,
+          conversation: { ...prev.conversation, title: next || null },
+        });
+      }
+      return { prev };
+    },
+    onError: (e, _vars, ctx) => {
+      if (ctx?.prev) {
+        qc.setQueryData(['conversation', conversationId], ctx.prev);
+      }
+      toast.error('Rename failed', {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['conversations'] });
+    },
+  });
 
   return (
     <AppLayout activeKey="chat">
       <div className="flex-1 flex flex-col h-[calc(100vh-3.5rem)]">
         <PageHeader
-          title={title}
-          backLink={{ to: '/chat', label: '← Stew' }}
+          title={
+            <EditableTitle
+              key={conversationId}
+              current={persistedTitle}
+              display={
+                <span className={persistedTitle ? 'text-white' : 'text-slate-400 italic'}>
+                  {displayTitle}
+                </span>
+              }
+              onSave={(next) => {
+                const trimmed = next.trim();
+                const previous = persistedTitle ?? '';
+                if (trimmed === previous) return;
+                rename.mutate(trimmed);
+              }}
+              saving={rename.isPending}
+              placeholder="Untitled conversation"
+              inputClass="bg-transparent outline-none border-b border-slate-600 focus:border-emerald-400 text-xl font-bold text-white tracking-tight w-full max-w-[28ch] placeholder:text-slate-600 disabled:opacity-60"
+              displayClass="text-xl font-bold tracking-tight text-white hover:text-emerald-200 transition"
+            />
+          }
+          backLink={{ to: '/chat', label: 'Stew' }}
           rightButtons={
             <span className="text-[10px] font-mono text-slate-500">{messageCount}</span>
           }
         />
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin px-6 py-6">
+        <div className="relative flex-1 min-h-0">
+          <div ref={scrollRef} className="absolute inset-0 overflow-y-auto scrollbar-thin px-6 py-6">
+          <div ref={contentRef}>
           {detail.isLoading ? (
             <ConversationSkeleton />
           ) : detail.error instanceof ApiError &&
@@ -200,11 +328,37 @@ export function StewConversation() {
           ) : (
             <MessageList messages={detail.data?.messages ?? []} inFlight={inFlight} />
           )}
+          </div>
+          </div>
+          {!atBottom && (
+            <button
+              type="button"
+              onClick={() => scrollToBottom(true)}
+              title="Scroll to latest"
+              aria-label="Scroll to latest message"
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-9 h-9 rounded-full bg-slate-900/90 border border-slate-700 hover:border-emerald-500/40 hover:bg-slate-800 text-slate-300 hover:text-emerald-300 shadow-lg backdrop-blur flex items-center justify-center transition"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <polyline points="19 12 12 19 5 12" />
+              </svg>
+            </button>
+          )}
         </div>
 
         <Composer
           onSend={onSend}
           disabled={send.isPending}
+          onStop={() => abortRef.current?.abort()}
           footerExtra={
             send.error instanceof ApiError ? (
               <span className="font-mono text-red-300 truncate">

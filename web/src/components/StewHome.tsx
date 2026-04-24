@@ -34,21 +34,18 @@ export function StewHome({
   footer?: ReactNode;
 }) {
   return (
-    <div className="flex-1 flex flex-col min-h-0">
-      <div className="flex-1 flex flex-col items-center justify-center px-10 py-12">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="flex-1 flex flex-col items-center justify-center px-10 py-6 min-h-0">
         <h1 className="text-4xl font-bold text-white tracking-tight">Meet Stew</h1>
         <p className="mt-3 text-slate-400 text-[15px] max-w-xl text-center">
-          Your metadata wizard — ask anything about your catalog. Stew shows its work on every
-          answer.
+          Your metadata wizard — ask anything about your catalog.
         </p>
         <div className="mt-3 flex items-center gap-3 text-[11px] text-slate-500">
           <span className="chip">29 tools</span>
           <span className="font-mono">26 local · 3 MCP</span>
-          <span className="text-slate-700">·</span>
-          <span className="font-mono">show-your-work</span>
         </div>
 
-        <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-2.5 w-full max-w-3xl">
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-2.5 w-full max-w-3xl">
           {SUGGESTIONS.map((s) => (
             <button
               key={s.label}

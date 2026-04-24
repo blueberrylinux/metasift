@@ -43,8 +43,23 @@ export function PageHeader({
         {backLink && (
           <Link
             to={backLink.to}
-            className="text-[10px] uppercase tracking-widest text-slate-500 hover:text-emerald-300 font-semibold"
+            className="inline-flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-400 hover:text-emerald-300 font-semibold transition group"
           >
+            <span className="w-6 h-6 rounded-md border border-slate-700 bg-slate-900/60 group-hover:border-emerald-500/40 group-hover:bg-emerald-500/5 flex items-center justify-center text-slate-300 group-hover:text-emerald-300 transition">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="19" y1="12" x2="5" y2="12" />
+                <polyline points="12 19 5 12 12 5" />
+              </svg>
+            </span>
             {backLink.label}
           </Link>
         )}
