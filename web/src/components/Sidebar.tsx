@@ -2,7 +2,8 @@
  * Sidebar rebuilt from metasift+/MetaSift App.html::Sidebar (L311-L410).
  * Structure:
  *   1. Composite health hero — ScoreRing + 2x2 MetricMini grid + weighting bar
- *   2. Workspace nav — 6 NavIcons (chat / queue / viz / dq / doc / llm)
+ *   2. Workspace nav — renders flat (7 rows) or grouped (Stew / Observability ▸
+ *      / Catalog ▸ / LLM setup) depending on SIDEBAR_NAV_LAYOUT below
  *   3. Quick actions — 5 scan trigger rows with inline progress
  *   4. Footer — OM + LLM connection status pulses
  *
@@ -12,8 +13,8 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import {
@@ -34,22 +35,112 @@ import { Skeleton, SkeletonRing } from './Skeleton';
 
 export type NavKey = 'chat' | 'review' | 'sources' | 'viz' | 'dq' | 'report' | 'llm';
 
-interface NavItem {
+// Layout switcher — three live paths so we can A/B-compare without losing
+// the previous shapes. Flip to 'flat' or 'grouped' to revert. Remove the
+// flag + the unused paths once the design is locked.
+//   'flat'         — original 7-row workspace nav + 5-row Quick actions.
+//   'grouped'      — Observability/Catalog dropdown tree + Quick actions.
+//   'restructured' — TopBar gains route shortcuts; sidebar nests scans
+//                    under Observability + Scans groups; Quick actions
+//                    section is gone (everything's in nav).
+const SIDEBAR_NAV_LAYOUT: 'flat' | 'grouped' | 'restructured' = 'restructured';
+
+type GroupKey = 'observability' | 'catalog' | 'scans';
+
+interface NavLeaf {
+  kind: 'leaf';
   key: NavKey;
   label: string;
   desc: string;
   to: string;
   icon: NavIconKind;
 }
+interface NavScanItem {
+  kind: 'scan';
+  scanKind: ScanKind;
+  label: string;
+  sub: string;
+  icon: string;
+}
+type NavChild = NavLeaf | NavScanItem;
+interface NavGroup {
+  kind: 'group';
+  key: GroupKey;
+  label: string;
+  icon: NavIconKind;
+  children: NavChild[];
+}
+type NavNode = NavLeaf | NavGroup;
 
-const NAV_ITEMS: NavItem[] = [
-  { key: 'chat', label: 'Stew', desc: 'Metadata wizard', to: '/chat', icon: 'chat' },
-  { key: 'review', label: 'Review queue', desc: 'Accept · edit · reject', to: '/review', icon: 'queue' },
-  { key: 'sources', label: 'Data sources', desc: 'Connected services', to: '/data-sources', icon: 'sources' },
-  { key: 'viz', label: 'Visualizations', desc: '11 tabs', to: '/viz', icon: 'viz' },
-  { key: 'dq', label: 'Data quality', desc: 'Failures · gaps · risk', to: '/dq', icon: 'dq' },
-  { key: 'report', label: 'Executive report', desc: 'Markdown export', to: '/report', icon: 'doc' },
-  { key: 'llm', label: 'LLM setup', desc: 'Provider · model · keys', to: '/settings', icon: 'llm' },
+// Legacy flat layout — kept for A/B via SIDEBAR_NAV_LAYOUT.
+const NAV_ITEMS: NavLeaf[] = [
+  { kind: 'leaf', key: 'chat', label: 'Stew', desc: 'Metadata wizard', to: '/chat', icon: 'chat' },
+  { kind: 'leaf', key: 'review', label: 'Review queue', desc: 'Accept · edit · reject', to: '/review', icon: 'queue' },
+  { kind: 'leaf', key: 'sources', label: 'Data sources', desc: 'Connected services', to: '/data-sources', icon: 'sources' },
+  { kind: 'leaf', key: 'viz', label: 'Visualizations', desc: '11 tabs', to: '/viz', icon: 'viz' },
+  { kind: 'leaf', key: 'dq', label: 'Data quality', desc: 'Failures · gaps · risk', to: '/dq', icon: 'dq' },
+  { kind: 'leaf', key: 'report', label: 'Executive report', desc: 'Markdown export', to: '/report', icon: 'doc' },
+  { kind: 'leaf', key: 'llm', label: 'LLM setup', desc: 'Provider · model · keys', to: '/settings', icon: 'llm' },
+];
+
+// Grouped layout — Observability bundles the analytical read surfaces,
+// Catalog bundles the write-adjacent screens. Leaf NavKey values are
+// identical to NAV_ITEMS so no screen needs to change activeKey.
+const NAV_TREE: NavNode[] = [
+  { kind: 'leaf', key: 'chat', label: 'Stew', desc: 'Metadata wizard', to: '/chat', icon: 'chat' },
+  {
+    kind: 'group',
+    key: 'observability',
+    label: 'Observability',
+    icon: 'observability',
+    children: [
+      { kind: 'leaf', key: 'viz', label: 'Visualizations', desc: '11 tabs', to: '/viz', icon: 'viz' },
+      { kind: 'leaf', key: 'dq', label: 'Data quality', desc: 'Failures · gaps · risk', to: '/dq', icon: 'dq' },
+      { kind: 'leaf', key: 'report', label: 'Executive report', desc: 'Markdown export', to: '/report', icon: 'doc' },
+    ],
+  },
+  {
+    kind: 'group',
+    key: 'catalog',
+    label: 'Catalog',
+    icon: 'catalog',
+    children: [
+      { kind: 'leaf', key: 'sources', label: 'Data sources', desc: 'Connected services', to: '/data-sources', icon: 'sources' },
+      { kind: 'leaf', key: 'review', label: 'Review queue', desc: 'Accept · edit · reject', to: '/review', icon: 'queue' },
+    ],
+  },
+  { kind: 'leaf', key: 'llm', label: 'LLM setup', desc: 'Provider · model · keys', to: '/settings', icon: 'llm' },
+];
+
+// Restructured layout — Stew on top, Observability bundles DQ + the two LLM
+// scans, Scans bundles the catalog-wide deep/PII passes, Visualizations and
+// Review queue stay top-level. LLM setup, Executive report, Data sources,
+// and Refresh metadata move to the TopBar (see TopBar.tsx).
+const NAV_TREE_RESTRUCTURED: NavNode[] = [
+  { kind: 'leaf', key: 'chat', label: 'Stew', desc: 'Metadata wizard', to: '/chat', icon: 'chat' },
+  {
+    kind: 'group',
+    key: 'observability',
+    label: 'Observability',
+    icon: 'observability',
+    children: [
+      { kind: 'leaf', key: 'dq', label: 'Data quality', desc: 'Failures · gaps · risk', to: '/dq', icon: 'dq' },
+      { kind: 'scan', scanKind: 'dq_recommend', icon: '💡', label: 'Recommend DQ tests', sub: 'One LLM call per table' },
+      { kind: 'scan', scanKind: 'dq_explain', icon: '🧪', label: 'Explain DQ failures', sub: 'One LLM call per failure' },
+    ],
+  },
+  {
+    kind: 'group',
+    key: 'scans',
+    label: 'Scans',
+    icon: 'scans',
+    children: [
+      { kind: 'scan', scanKind: 'deep_scan', icon: '⌕', label: 'Deep scan', sub: 'Stale · conflicts · quality' },
+      { kind: 'scan', scanKind: 'pii_scan', icon: '⚑', label: 'PII scan', sub: 'Heuristic · zero-LLM' },
+    ],
+  },
+  { kind: 'leaf', key: 'viz', label: 'Visualizations', desc: '11 tabs', to: '/viz', icon: 'viz' },
+  { kind: 'leaf', key: 'review', label: 'Review queue', desc: 'Accept · edit · reject', to: '/review', icon: 'queue' },
 ];
 
 const QUICK_ACTIONS: {
@@ -93,29 +184,19 @@ export function Sidebar({ activeKey }: { activeKey: NavKey }) {
       <nav className="flex-1 px-3 py-4 overflow-y-auto scrollbar-thin">
         <SectionLabel>Workspace</SectionLabel>
         <div className="space-y-1">
-          {NAV_ITEMS.map((item) => {
-            const active = item.key === activeKey;
-            const badge =
-              item.key === 'review' ? pending.data?.rows.length ?? undefined : undefined;
-            return (
-              <NavRow
-                key={item.key}
-                item={item}
-                active={active}
-                badge={badge && badge > 0 ? badge : undefined}
-              />
-            );
-          })}
+          <WorkspaceNav activeKey={activeKey} pendingCount={pending.data?.rows.length} />
         </div>
 
-        <div className="mt-6">
-          <SectionLabel>Quick actions</SectionLabel>
-          <div className="space-y-1">
-            {QUICK_ACTIONS.map((a) => (
-              <QuickAction key={a.kind} {...a} />
-            ))}
+        {SIDEBAR_NAV_LAYOUT !== 'restructured' && (
+          <div className="mt-6">
+            <SectionLabel>Quick actions</SectionLabel>
+            <div className="space-y-1">
+              {QUICK_ACTIONS.map((a) => (
+                <QuickAction key={a.kind} {...a} />
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </nav>
 
       <StatusFooter health={health.data} />
@@ -241,14 +322,79 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function NavRow({ item, active, badge }: { item: NavItem; active: boolean; badge?: number }) {
+// Workspace nav — branches on SIDEBAR_NAV_LAYOUT. Flat path mirrors the
+// original 7-row list; grouped/restructured paths nest screens (and, in
+// 'restructured', scan triggers) under collapsible parent rows.
+function WorkspaceNav({
+  activeKey,
+  pendingCount,
+}: {
+  activeKey: NavKey;
+  pendingCount: number | undefined;
+}) {
+  const { pathname } = useLocation();
+  const reviewBadge = pendingCount && pendingCount > 0 ? pendingCount : undefined;
+
+  if (SIDEBAR_NAV_LAYOUT === 'flat') {
+    return (
+      <>
+        {NAV_ITEMS.map((item) => (
+          <NavLeafRow
+            key={item.key}
+            item={item}
+            active={item.key === activeKey}
+            badge={item.key === 'review' ? reviewBadge : undefined}
+          />
+        ))}
+      </>
+    );
+  }
+
+  const tree = SIDEBAR_NAV_LAYOUT === 'restructured' ? NAV_TREE_RESTRUCTURED : NAV_TREE;
+
+  return (
+    <>
+      {tree.map((node) =>
+        node.kind === 'leaf' ? (
+          <NavLeafRow
+            key={node.key}
+            item={node}
+            active={node.key === activeKey}
+            badge={node.key === 'review' ? reviewBadge : undefined}
+          />
+        ) : (
+          <NavGroupRow
+            key={node.key}
+            group={node}
+            activeKey={activeKey}
+            pathname={pathname}
+            reviewBadge={reviewBadge}
+          />
+        ),
+      )}
+    </>
+  );
+}
+
+function NavLeafRow({
+  item,
+  active,
+  badge,
+}: {
+  item: NavLeaf;
+  active: boolean;
+  badge?: number;
+}) {
   const base =
     'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition group border';
   const activeCls = 'bg-emerald-500/10 border-emerald-500/20';
   const idleCls = 'border-transparent hover:bg-slate-900/80';
 
   return (
-    <Link to={item.to} className={`${base} ${active ? activeCls : idleCls}`}>
+    <Link
+      to={item.to}
+      className={`${base} ${active ? activeCls : idleCls}`}
+    >
       <div
         className={`w-7 h-7 rounded-md flex items-center justify-center ${
           active ? 'bg-emerald-500/15' : 'bg-slate-900 group-hover:bg-slate-800'
@@ -268,6 +414,120 @@ function NavRow({ item, active, badge }: { item: NavItem; active: boolean; badge
         </span>
       ) : null}
     </Link>
+  );
+}
+
+// Collapsible parent row. Auto-expands when any child's path matches the
+// current URL; click toggles expansion (no routing). Badge bubbles up from
+// child → parent when collapsed so pending work stays visible.
+function NavGroupRow({
+  group,
+  activeKey,
+  pathname,
+  reviewBadge,
+}: {
+  group: NavGroup;
+  activeKey: NavKey;
+  pathname: string;
+  reviewBadge: number | undefined;
+}) {
+  const containsActive = useMemo(
+    () =>
+      group.children.some(
+        (c) => c.kind === 'leaf' && (c.to === pathname || c.key === activeKey),
+      ),
+    [group.children, pathname, activeKey],
+  );
+  const [expanded, setExpanded] = useState(containsActive);
+  // Re-expand when navigation lands on a child of this group.
+  useEffect(() => {
+    if (containsActive) setExpanded(true);
+  }, [containsActive]);
+
+  // When collapsed, show the child badge (currently only Review queue) on
+  // the parent so count visibility isn't lost.
+  const hasReviewChild = group.children.some(
+    (c) => c.kind === 'leaf' && c.key === 'review',
+  );
+  const parentBadge = !expanded && hasReviewChild ? reviewBadge : undefined;
+
+  // Mixed children get a generic label since "screens" lies when half are
+  // scan triggers. Pure-leaf groups keep the screen count.
+  const allLeaves = group.children.every((c) => c.kind === 'leaf');
+  const subLabel = allLeaves
+    ? `${group.children.length} screens`
+    : `${group.children.length} items`;
+
+  const base =
+    'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition group border';
+  const idleCls = 'border-transparent hover:bg-slate-900/80';
+  const hintCls =
+    containsActive && !expanded ? 'border-emerald-500/15 bg-emerald-500/[0.04]' : idleCls;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        aria-expanded={expanded}
+        aria-controls={`nav-group-${group.key}`}
+        className={`${base} ${hintCls}`}
+      >
+        <div className="w-7 h-7 rounded-md flex items-center justify-center bg-slate-900 group-hover:bg-slate-800">
+          <NavIcon kind={group.icon} active={containsActive && !expanded} />
+        </div>
+        <div className="flex-1">
+          <div className="text-[13px] font-medium text-slate-300 flex items-center gap-2">
+            {group.label}
+            {containsActive && !expanded && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden />
+            )}
+          </div>
+          <div className="text-[10px] text-slate-500">{subLabel}</div>
+        </div>
+        {parentBadge ? (
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">
+            {parentBadge}
+          </span>
+        ) : null}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`text-slate-500 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          aria-hidden
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+      {expanded && (
+        <div id={`nav-group-${group.key}`} className="mt-1 space-y-1 pl-3">
+          {group.children.map((child) =>
+            child.kind === 'leaf' ? (
+              <NavLeafRow
+                key={child.key}
+                item={child}
+                active={child.key === activeKey}
+                badge={child.key === 'review' ? reviewBadge : undefined}
+              />
+            ) : (
+              <QuickAction
+                key={child.scanKind}
+                kind={child.scanKind}
+                icon={child.icon}
+                label={child.label}
+                sub={child.sub}
+              />
+            ),
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

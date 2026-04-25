@@ -4,7 +4,17 @@
  * pulls from the design tokens (emerald-400 / slate-500).
  */
 
-export type NavIconKind = 'chat' | 'queue' | 'viz' | 'dq' | 'doc' | 'llm' | 'sources';
+export type NavIconKind =
+  | 'chat'
+  | 'queue'
+  | 'viz'
+  | 'dq'
+  | 'doc'
+  | 'llm'
+  | 'sources'
+  | 'observability'
+  | 'catalog'
+  | 'scans';
 
 export function NavIcon({ kind, active }: { kind: NavIconKind; active: boolean }) {
   const color = active ? '#34d399' : '#64748b';
@@ -73,6 +83,32 @@ export function NavIcon({ kind, active }: { kind: NavIconKind; active: boolean }
           <ellipse cx="12" cy="5" rx="8" ry="2.5" />
           <path d="M4 5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5" />
           <path d="M4 11v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6" />
+        </svg>
+      );
+    case 'observability':
+      // Eye-in-scope — matches OM's Observability bucket glyph.
+      return (
+        <svg {...common} viewBox="0 0 24 24">
+          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      );
+    case 'catalog':
+      // Open book / ledger — grouped catalog-side screens (sources + review).
+      return (
+        <svg {...common} viewBox="0 0 24 24">
+          <path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z" />
+          <path d="M20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z" />
+        </svg>
+      );
+    case 'scans':
+      // Radar sweep — distinct from the magnifying glass used inline by the
+      // existing scan emojis so the parent icon doesn't clash with children.
+      return (
+        <svg {...common} viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 12 19 7" />
         </svg>
       );
   }
