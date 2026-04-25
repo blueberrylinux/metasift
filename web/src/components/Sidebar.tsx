@@ -18,6 +18,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import {
+  ApiError,
   type BulkDocBody,
   type CompositeScore,
   type HealthResponse,
@@ -178,6 +179,8 @@ export function Sidebar({ activeKey }: { activeKey: NavKey }) {
     <aside className="w-[280px] shrink-0 border-r border-slate-800/80 bg-slate-950/60 flex flex-col h-[calc(100vh-3.5rem)] sticky top-14">
       {composite.isLoading ? (
         <HealthHeroSkeleton />
+      ) : composite.error || !composite.data ? (
+        <HealthHeroError error={composite.error} />
       ) : (
         <HealthHero composite={composite.data} />
       )}
@@ -273,6 +276,34 @@ function HealthHero({ composite }: { composite?: CompositeScore }) {
           <span>con 20</span>
           <span>qua 20</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Error state for the health hero — used when getComposite() fails (network
+// down, DuckDB not hydrated, etc.). Without this, the skeleton-or-data branch
+// would render a fake `0%` composite score, which reads as "real data" rather
+// than "we couldn't fetch it" and quietly misrepresents catalog health.
+function HealthHeroError({ error }: { error: unknown }) {
+  const isNoMeta = error instanceof ApiError && error.code === 'no_metadata_loaded';
+  const heading = isNoMeta ? 'Awaiting metadata' : 'Health unavailable';
+  const body = isNoMeta
+    ? 'Click Refresh metadata in the topbar to pull from OpenMetadata.'
+    : error instanceof Error
+      ? error.message
+      : 'Composite score unavailable.';
+  return (
+    <div className="px-5 pt-5 pb-5 border-b border-slate-800/80">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          Catalog health
+        </div>
+        <span className="chip amber">{isNoMeta ? 'idle' : 'error'}</span>
+      </div>
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+        <div className="text-[12px] text-slate-200 font-medium">{heading}</div>
+        <div className="text-[11px] text-slate-500 mt-1">{body}</div>
       </div>
     </div>
   );

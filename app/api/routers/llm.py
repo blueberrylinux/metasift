@@ -80,22 +80,32 @@ _PRIORITY_ORDER = {
 # dropdown doesn't hit the network on every page load but picks up new
 # releases within a reasonable window. Mirrors Streamlit's @st.cache_data.
 _CATALOG_TTL_SEC = 3600
+# Shorter negative TTL so a transient OpenRouter outage doesn't permanently
+# shadow the live list, but every catalog request doesn't pay the full 8s
+# fetch timeout while OpenRouter is down.
+_CATALOG_NEG_TTL_SEC = 60
 _catalog_cache: tuple[float, list[str]] | None = None
 
 
 def _fetch_openrouter_catalog() -> list[str]:
     """Pull OpenRouter's public model list. Returns [] on any failure so the
-    caller can fall back to `_FALLBACK_MODELS` without the route blowing up."""
+    caller can fall back to `_FALLBACK_MODELS` without the route blowing up.
+    Failures negative-cache for `_CATALOG_NEG_TTL_SEC` so we don't block every
+    /catalog request on the slow fetch path while OpenRouter is unavailable."""
     global _catalog_cache
     now = time.time()
-    if _catalog_cache and now - _catalog_cache[0] < _CATALOG_TTL_SEC:
-        return _catalog_cache[1]
+    if _catalog_cache:
+        age = now - _catalog_cache[0]
+        ttl = _CATALOG_TTL_SEC if _catalog_cache[1] else _CATALOG_NEG_TTL_SEC
+        if age < ttl:
+            return _catalog_cache[1]
     try:
         r = httpx.get("https://openrouter.ai/api/v1/models", timeout=8.0)
         r.raise_for_status()
         body: dict[str, Any] = r.json()
     except Exception as e:
         logger.warning(f"openrouter catalog fetch failed: {e}")
+        _catalog_cache = (now, [])
         return []
     ids = [
         item["id"]
@@ -119,19 +129,17 @@ def _current_model() -> str:
 @router.get("/catalog", response_model=LLMCatalogResponse)
 def get_catalog() -> LLMCatalogResponse:
     """Available models + the currently active one. `source` tells the UI
-    whether it's looking at OpenRouter's full list or the offline fallback."""
+    whether it's looking at OpenRouter's full list or the offline fallback.
+    Always splices the active model into the response so the UI can show a
+    valid selection even when the user is on a custom/deprecated id missing
+    from the catalog or fallback."""
     dynamic = _fetch_openrouter_catalog()
+    current = _current_model()
     if dynamic:
-        return LLMCatalogResponse(
-            models=dynamic,
-            current=_current_model(),
-            source="openrouter",
-        )
-    return LLMCatalogResponse(
-        models=_FALLBACK_MODELS,
-        current=_current_model(),
-        source="fallback",
-    )
+        models = dynamic if current in dynamic else [current, *dynamic]
+        return LLMCatalogResponse(models=models, current=current, source="openrouter")
+    models = _FALLBACK_MODELS if current in _FALLBACK_MODELS else [current, *_FALLBACK_MODELS]
+    return LLMCatalogResponse(models=models, current=current, source="fallback")
 
 
 @router.post("/model", response_model=ModelConfig)

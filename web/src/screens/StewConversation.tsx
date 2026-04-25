@@ -197,13 +197,18 @@ export function StewConversation() {
         throw e;
       }
     },
-    onSettled: async () => {
+    onSettled: async (_data, _error, _vars, _ctx) => {
       // Server persisted on `final`; refetch the detail (and list, for the
       // updated_at ordering) before clearing the preview so the UI doesn't
       // blink through an empty state.
       await qc.invalidateQueries({ queryKey: ['conversation', conversationId] });
       await qc.invalidateQueries({ queryKey: ['conversations'] });
-      setInFlight(null);
+      // Preserve the in-flight bubble when the SSE stream ended in an `error`
+      // frame — `streamChat` resolves normally for in-band errors so
+      // `send.error` stays null, and clearing inFlight here would erase the
+      // user's only signal that the turn failed. Keep it visible until the
+      // user sends another message or navigates away.
+      setInFlight((cur) => (cur && cur.error ? cur : null));
     },
   });
 
@@ -213,15 +218,12 @@ export function StewConversation() {
   // from StewHome or the WelcomeModal's suggestion chips. The `autoSentRef`
   // is the authoritative guard — StrictMode's dev double-invoke, a refresh
   // that preserves history state, or back-nav would otherwise re-submit.
-  // The `replaceState` call at the bottom is cosmetic (React Router reads
-  // its own history cache, not the native one) but doesn't hurt.
   useEffect(() => {
     const initial = (location.state as LocationState | null)?.initial_question;
     if (!initial || autoSentRef.current) return;
     if (!detail.data || detail.data.messages.length > 0) return;
     autoSentRef.current = true;
     send.mutate(initial);
-    window.history.replaceState({}, '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.data, location.state]);
 

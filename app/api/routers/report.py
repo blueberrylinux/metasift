@@ -35,10 +35,12 @@ def get_report(duck_ok: DuckOk) -> ReportResponse:
     try:
         md = engine_report.generate_markdown_report()
     except Exception as e:
+        # Engine errors can leak SQL fragments / file paths / provider details.
+        # Log full trace server-side; surface a generic message to the client.
         logger.exception("report generation failed")
         raise errors.ApiError(
             errors.ErrorCode.INTERNAL_ERROR,
-            f"Report generation failed: {e}",
+            "Report generation failed. Check the server logs for details.",
             status_code=500,
         ) from e
     return ReportResponse(

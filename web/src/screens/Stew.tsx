@@ -45,6 +45,13 @@ export function Stew() {
         state: question ? { initial_question: question } : undefined,
       });
     },
+    onError: (e) => {
+      // Without this the CTA just flips back to its idle label and the
+      // user has no signal that anything went wrong — surface the API
+      // message so they can act (rotate JWT, restart API, etc.).
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error("Couldn't start a new conversation", { description: msg });
+    },
   });
 
   // Pre-filled question from the WelcomeModal or any external link

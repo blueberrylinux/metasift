@@ -25,6 +25,7 @@ Reference for the pattern: PORT_ERRATA.md §"Engines (scan) — sync vs async".
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -106,10 +107,33 @@ async def _stream_engine_scan(
     scope."""
 
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    # Bounded queue so a fast-emitting engine (or a stuck consumer post-
+    # disconnect) can't grow an unbounded backlog of progress frames in memory.
+    # 256 is generous — even a 1000-step scan only buffers a fraction.
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=256)
+    # Set to True when the SSE generator's caller (FastAPI's response runner)
+    # cancels us — typically because the client disconnected. The worker
+    # thread checks this before emitting; once tripped, no more frames flow
+    # into the queue, capping memory at whatever was already buffered.
+    cancelled = False
+
+    def _safe_put(ev: dict[str, Any] | None) -> None:
+        # Runs ON the event loop via call_soon_threadsafe. Wrap put_nowait
+        # so a full bounded queue (slow consumer, brief network hiccup)
+        # drops the frame instead of bubbling QueueFull into the loop's
+        # default exception handler. Progress frames are replaceable; the
+        # final `done`/`error`/`None` frame is what matters for clean
+        # stream termination, and that one fires after consumer draining.
+        with contextlib.suppress(asyncio.QueueFull):
+            queue.put_nowait(ev)
 
     def emit(ev: dict[str, Any] | None) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, ev)
+        if cancelled:
+            return
+        # RuntimeError fires when the loop is closed (process shutting down)
+        # — nothing to do at that point.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(_safe_put, ev)
 
     def progress_cb(step: int, total: int, label: str) -> None:
         emit(
@@ -139,43 +163,55 @@ async def _stream_engine_scan(
                 counts = {k: str(v) for k, v in summary.items()}
             store.finish_scan(run_id, status="completed", counts=counts)
             emit({"type": "done", "run_id": run_id, "counts": counts})
-        except Exception as e:
+        except Exception:
+            # Engine errors can leak SQL fragments / provider details / file
+            # paths. Log full trace server-side; surface a generic message to
+            # client + scan_runs.error. Scan kind is enough for the UI to tell
+            # the user which scan failed.
             logger.exception(f"scan {kind} failed")
-            store.finish_scan(run_id, status="failed", error=str(e))
-            emit({"type": "error", "run_id": run_id, "message": str(e)})
+            generic = f"Scan {kind!r} failed. Check the server logs for details."
+            store.finish_scan(run_id, status="failed", error=generic)
+            emit({"type": "error", "run_id": run_id, "message": generic})
         finally:
             emit(None)
 
     loop.run_in_executor(_SCAN_EXECUTOR, runner)
     deadline = loop.time() + _SCAN_WATCHDOG_S
-    while True:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            logger.warning(f"scan {kind} (run_id={run_id}) hit watchdog timeout")
-            # Mark the row failed so the UI's 'running' state clears. The
-            # worker thread may still be looping — it'll eventually finish
-            # and its late finish_scan call is fine (harmless UPDATE).
+    try:
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.warning(f"scan {kind} (run_id={run_id}) hit watchdog timeout")
+                # Mark the row failed so the UI's 'running' state clears. The
+                # worker thread may still be looping — it'll eventually finish
+                # and its late finish_scan call is fine (harmless UPDATE).
+                try:
+                    store.finish_scan(
+                        run_id,
+                        status="failed",
+                        error=f"Watchdog timeout after {int(_SCAN_WATCHDOG_S)}s",
+                    )
+                except Exception:
+                    logger.exception("watchdog finish_scan failed")
+                yield {
+                    "type": "error",
+                    "run_id": run_id,
+                    "message": f"Scan exceeded {int(_SCAN_WATCHDOG_S)}s watchdog — check server logs.",
+                }
+                return
             try:
-                store.finish_scan(
-                    run_id,
-                    status="failed",
-                    error=f"Watchdog timeout after {int(_SCAN_WATCHDOG_S)}s",
-                )
-            except Exception:
-                logger.exception("watchdog finish_scan failed")
-            yield {
-                "type": "error",
-                "run_id": run_id,
-                "message": f"Scan exceeded {int(_SCAN_WATCHDOG_S)}s watchdog — check server logs.",
-            }
-            return
-        try:
-            ev = await asyncio.wait_for(queue.get(), timeout=remaining)
-        except TimeoutError:
-            continue  # next loop iteration trips the watchdog branch above
-        if ev is None:
-            return
-        yield ev
+                ev = await asyncio.wait_for(queue.get(), timeout=remaining)
+            except TimeoutError:
+                continue  # next loop iteration trips the watchdog branch above
+            if ev is None:
+                return
+            yield ev
+    finally:
+        # Client disconnect / response complete fires GeneratorExit / cancel.
+        # Flip the flag so the worker thread stops queueing — the thread itself
+        # cannot be cancelled (engines have no abort API), but its frames are
+        # no longer accumulating in memory.
+        cancelled = True
 
 
 def _sse_response(events_coro: AsyncIterator[dict[str, Any]]) -> EventSourceResponse:

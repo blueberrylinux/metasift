@@ -8,7 +8,7 @@
  * toast so the action is visible even when the row scrolls out.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 interface Props {
@@ -27,6 +27,16 @@ interface Props {
 
 export function CopyableFQN({ fqn, variant = 'full', className, columnSuffix }: Props) {
   const [copied, setCopied] = useState(false);
+  // Track the active "copied → not copied" timer so rapid re-clicks don't
+  // leave the first timer pending. Without the clear, click 2 inside the
+  // 1.5s window fires both timers and the first one flips `copied` back to
+  // false before click 2's window expires.
+  const resetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (resetRef.current) clearTimeout(resetRef.current);
+    };
+  }, []);
 
   const display = variant === 'short' ? shortFQN(fqn) : fqn;
   const label = `Copy ${fqn}`;
@@ -41,7 +51,11 @@ export function CopyableFQN({ fqn, variant = 'full', className, columnSuffix }: 
       await navigator.clipboard.writeText(fqn);
       setCopied(true);
       toast.success('FQN copied', { description: fqn });
-      setTimeout(() => setCopied(false), 1500);
+      if (resetRef.current) clearTimeout(resetRef.current);
+      resetRef.current = setTimeout(() => {
+        setCopied(false);
+        resetRef.current = null;
+      }, 1500);
     } catch {
       toast.error('Copy failed');
     }

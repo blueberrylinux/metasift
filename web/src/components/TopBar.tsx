@@ -9,12 +9,12 @@
  * can flip back to the minimal header without losing the code.
  */
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { type ScanFrame, streamScan } from '../lib/api';
+import { getHealth, type ScanFrame, streamScan } from '../lib/api';
 import { LogoM } from './LogoM';
 
 // Flip to 'classic' to drop the route shortcuts + refresh button and
@@ -22,6 +22,19 @@ import { LogoM } from './LogoM';
 const TOPBAR_NAV_BUTTONS: 'classic' | 'expanded' = 'expanded';
 
 export function TopBar({ onOpenWelcome }: { onOpenWelcome?: () => void }) {
+  // Pull live health for the version badge — replaces the hardcoded
+  // `openmetadata.local · admin` strip which was wrong as soon as the user
+  // pointed at a different OM host. Once JWT-from-UI lands the host can come
+  // from `/om/config` so we can show it here too.
+  const health = useQuery({
+    queryKey: ['health'],
+    queryFn: getHealth,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const omReachable = health.data?.om;
+  const omVersion = health.data?.version;
+
   return (
     <div className="h-14 border-b border-slate-800/80 backdrop-blur-md bg-slate-950/70 flex items-center justify-between px-5 sticky top-0 z-30">
       <div className="flex items-center gap-3">
@@ -36,9 +49,17 @@ export function TopBar({ onOpenWelcome }: { onOpenWelcome?: () => void }) {
         </div>
         <div className="ml-5 h-5 w-px bg-slate-800" />
         <div className="flex items-center gap-2 text-[11px] text-slate-400">
-          <span className="font-mono">openmetadata.local</span>
-          <span className="w-1 h-1 rounded-full bg-slate-700" />
-          <span className="font-mono">admin</span>
+          <span
+            className={
+              'w-1.5 h-1.5 rounded-full ' +
+              (omReachable ? 'bg-emerald-400' : 'bg-slate-600')
+            }
+            aria-label={omReachable ? 'OpenMetadata reachable' : 'OpenMetadata unreachable'}
+          />
+          <span className="font-mono">OpenMetadata</span>
+          {omVersion && (
+            <span className="font-mono text-slate-500">{omVersion}</span>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2">

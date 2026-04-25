@@ -384,9 +384,13 @@ function ExplanationRow({
 
 function RecommendationsPanel() {
   const [severity, setSeverity] = useState<Severity | null>(null);
+  // Fetch ALL recommendations once and filter client-side. If we passed
+  // `severity` to the server, the chip counts below would all show 0 for
+  // every non-selected bucket because `rows` would only contain the chosen
+  // severity. Per-table recs are a small dataset; client-side filter is fine.
   const q = useQuery({
-    queryKey: ['dq', 'recommendations', severity],
-    queryFn: () => getDQRecommendations(severity ?? undefined),
+    queryKey: ['dq', 'recommendations'],
+    queryFn: () => getDQRecommendations(),
   });
 
   if (q.isLoading) return <DQCardSkeleton rows={3} />;
@@ -417,6 +421,7 @@ function RecommendationsPanel() {
   }
 
   const severities: (Severity | null)[] = [null, 'critical', 'recommended', 'nice-to-have'];
+  const visible = severity ? q.data.rows.filter((r) => r.severity === severity) : q.data.rows;
 
   return (
     <>
@@ -432,7 +437,7 @@ function RecommendationsPanel() {
         })}
       </div>
 
-      {q.data.rows.length === 0 ? (
+      {visible.length === 0 ? (
         <EmptyState
           icon="⌕"
           title="Nothing at this severity"
@@ -441,7 +446,7 @@ function RecommendationsPanel() {
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {q.data.rows.map((r, i) => (
+          {visible.map((r, i) => (
             <RecommendationCard key={`${r.table_fqn}:${r.column_name || ''}:${r.test_definition}:${i}`} r={r} />
           ))}
         </div>

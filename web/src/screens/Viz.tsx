@@ -29,8 +29,14 @@ export function Viz() {
 
   // Pick the first tab as the default once the list resolves. We don't put
   // this in useState's initializer because the list isn't known yet.
+  // Fall through to the first tab if `activeSlug` was set but the underlying
+  // slug has since disappeared (engine update, tab renamed) — otherwise the
+  // strip silently renders "no tab selected" with no usable selection.
   const rows = tabs.data?.tabs ?? [];
-  const active = activeSlug ?? rows[0]?.slug ?? null;
+  const active =
+    activeSlug && rows.some((t) => t.slug === activeSlug)
+      ? activeSlug
+      : rows[0]?.slug ?? null;
   const activeTab = rows.find((t) => t.slug === active) ?? null;
 
   return (

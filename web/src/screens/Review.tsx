@@ -47,13 +47,17 @@ export function Review() {
     queryFn: () => listReview(),
   });
 
-  const visible = useMemo(
-    () =>
+  const visible = useMemo(() => {
+    const rows =
       filter === 'all'
         ? q.data?.rows ?? []
-        : (q.data?.rows ?? []).filter((r) => r.kind === filter),
-    [filter, q.data],
-  );
+        : (q.data?.rows ?? []).filter((r) => r.kind === filter);
+    // Sort matches the "sorted: confidence ↓" label in the filter strip.
+    // Tie-break by FQN for stable ordering across refetches.
+    return [...rows].sort(
+      (a, b) => b.confidence - a.confidence || a.fqn.localeCompare(b.fqn),
+    );
+  }, [filter, q.data]);
 
   // Re-select if the selection fell off the visible list (after a filter
   // change or an accept/reject removed it).
@@ -65,7 +69,22 @@ export function Review() {
 
   const counts = useMemo(() => countByKind(q.data?.rows ?? []), [q.data]);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['review'] });
+  // After a mutation lands, refetch the list AND drop actStatus entries for
+  // keys that are no longer in the queue. Without the prune, dead keys
+  // accumulate in actStatus across the session and grow the in-memory map.
+  const invalidate = async () => {
+    await qc.invalidateQueries({ queryKey: ['review'] });
+    const fresh = qc.getQueryData<{ rows: ReviewItem[] }>(['review']);
+    if (!fresh) return;
+    const live = new Set(fresh.rows.map((r) => r.key));
+    setActStatus((m) => {
+      const next: Record<string, ActStatus> = {};
+      for (const [k, v] of Object.entries(m)) {
+        if (live.has(k)) next[k] = v;
+      }
+      return next;
+    });
+  };
 
   const markActed = (key: string, status: ActStatus) =>
     setActStatus((m) => ({ ...m, [key]: status }));

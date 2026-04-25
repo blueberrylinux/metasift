@@ -84,9 +84,23 @@ def _parse_block(block: str) -> dict[str, Any] | None:
 
 def sse_trace(question: str, host: str) -> list[dict[str, Any]]:
     """Invoke /chat/stream over HTTP and demux the SSE frames — what the
-    React client does."""
+    React client does. Raises `RuntimeError` on an in-band `error` frame so
+    the harness fails the run instead of silently passing on a 200 response
+    that produced an error."""
     url = f"{host.rstrip('/')}/api/v1/chat/stream"
     calls: dict[str, dict[str, Any]] = {}
+
+    def absorb(frame: dict[str, Any] | None) -> None:
+        if not frame:
+            return
+        ftype = frame.get("type")
+        if ftype == "error":
+            raise RuntimeError(f"SSE error frame: {frame.get('message') or frame}")
+        if ftype == "tool_call":
+            tc_id = frame["id"]
+            if tc_id not in calls:
+                calls[tc_id] = {"name": frame["name"], "args": frame.get("args", {})}
+
     with httpx.stream(
         "POST",
         url,
@@ -104,17 +118,9 @@ def sse_trace(question: str, host: str) -> list[dict[str, Any]]:
                     break
                 block = buf[: m.start()]
                 buf = buf[m.end() :]
-                frame = _parse_block(block)
-                if frame and frame.get("type") == "tool_call":
-                    tc_id = frame["id"]
-                    if tc_id not in calls:
-                        calls[tc_id] = {"name": frame["name"], "args": frame.get("args", {})}
+                absorb(_parse_block(block))
         if buf.strip():
-            frame = _parse_block(buf)
-            if frame and frame.get("type") == "tool_call":
-                tc_id = frame["id"]
-                if tc_id not in calls:
-                    calls[tc_id] = {"name": frame["name"], "args": frame.get("args", {})}
+            absorb(_parse_block(buf))
     return list(calls.values())
 
 
