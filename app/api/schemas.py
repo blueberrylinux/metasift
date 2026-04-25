@@ -475,3 +475,27 @@ class ReportResponse(BaseModel):
 
     markdown: str
     generated_at: str
+
+
+# ── /om (OpenMetadata connection) ─────────────────────────────────────────
+
+
+class OMConfigResponse(BaseModel):
+    """Current OM connection settings + provenance.
+
+    `host` is the OM root (no `/api`). `has_token` is true if either an
+    override is set or `.env` has a token. `source` tells the UI where the
+    active token comes from so it can show "from .env" vs "set via UI"."""
+
+    host: str
+    has_token: bool
+    source: Literal["env", "sqlite", "unset"]
+
+
+class OMConfigRequest(BaseModel):
+    """Save a new OM connection. The server validates by hitting OM's
+    `/v1/system/version` with the new credentials before persisting — a
+    failed validation surfaces the OM error verbatim and nothing is saved."""
+
+    host: str = Field(..., min_length=1)
+    jwt: str = Field(..., min_length=1)

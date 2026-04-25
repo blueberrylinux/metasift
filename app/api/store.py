@@ -483,3 +483,42 @@ def scan_is_running(kind: str) -> bool:
         .fetchone()
     )
     return row is not None
+
+
+# ── Runtime config (UI-settable overrides) ────────────────────────────────
+
+
+def get_runtime_config(key: str) -> str | None:
+    """Read a single override. Returns None when unset — caller is expected
+    to fall back to .env / settings."""
+    row = (
+        get_conn()
+        .execute("SELECT value FROM runtime_config WHERE key = ?", (key,))
+        .fetchone()
+    )
+    return row[0] if row else None
+
+
+def set_runtime_config(key: str, value: str) -> None:
+    """Upsert an override. Persists across restarts so the JWT-from-UI flow
+    survives a process bounce — the alternative (writing .env) is a deploy
+    footgun and requires a reload to be picked up."""
+    get_conn().execute(
+        "INSERT INTO runtime_config (key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        (key, value, iso_utc_z()),
+    )
+
+
+def delete_runtime_config(key: str) -> None:
+    """Drop an override and fall back to .env / settings on next read."""
+    get_conn().execute("DELETE FROM runtime_config WHERE key = ?", (key,))
+
+
+def all_runtime_config() -> dict[str, str]:
+    """Snapshot of every override — used at startup to push values into the
+    relevant client modules in one pass."""
+    return {
+        row[0]: row[1]
+        for row in get_conn().execute("SELECT key, value FROM runtime_config").fetchall()
+    }

@@ -2,7 +2,7 @@
 # Run `make help` for the full list.
 
 .PHONY: help install dev run stack-up stack-down stack-logs seed clean lint test token \
-        api web web-install build-web port-dev
+        api web web-install build-web port-dev reset-metasift reset-all
 
 help:
 	@echo "MetaSift dev commands"
@@ -24,6 +24,10 @@ help:
 	@echo "  make web         — launch Vite dev server (port 5173)"
 	@echo "  make build-web   — build React bundle into web/dist"
 	@echo "  make port-dev    — run api + web together (parallel)"
+	@echo ""
+	@echo "Reset"
+	@echo "  make reset-metasift — wipe MetaSift sqlite (keep OM as-is)"
+	@echo "  make reset-all      — wipe OM volumes + MetaSift sqlite (full demo reset)"
 
 install:
 	uv venv --python 3.11
@@ -94,3 +98,32 @@ build-web:
 
 port-dev:
 	$(MAKE) -j 2 api web
+
+# ─── Reset targets ─────────────────────────────────────────────────────────
+# `reset-metasift` clears MetaSift's local SQLite (conversations, scan_runs,
+# suggestions, dq_explanations, dq_recommendations) so the next API boot
+# starts blank. OM is left running and untouched. Stop the API first — `rm`
+# succeeds against open files but the running process keeps the old inode.
+#
+# `reset-all` additionally wipes OM's docker volumes via `stack-down`. The
+# JWT for ingestion-bot is regenerated on next stack-up, so seeding before
+# rotating the token in .env will fail with 401s — the printed steps walk
+# through the rotation in order.
+
+reset-metasift:
+	@echo "⚠  Wiping MetaSift local state (sqlite + WAL + SHM)."
+	@echo "   OM data is untouched. Stop the API first if it's running."
+	@echo ""
+	rm -f metasift.sqlite metasift.sqlite-shm metasift.sqlite-wal
+	@echo "✔ Cleared. Restart the API and click Refresh metadata in the UI."
+
+reset-all: stack-down
+	rm -f metasift.sqlite metasift.sqlite-shm metasift.sqlite-wal
+	@echo ""
+	@echo "✔ OM volumes + MetaSift state wiped."
+	@echo ""
+	@echo "Next steps (in order):"
+	@echo "  1. make stack-up           — boot OM (~2 min)"
+	@echo "  2. make token              — print JWT rotation instructions"
+	@echo "  3. update OPENMETADATA_JWT_TOKEN + AI_SDK_TOKEN in .env"
+	@echo "  4. make seed && make api   — repopulate + start backend"

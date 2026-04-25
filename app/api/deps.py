@@ -33,6 +33,17 @@ from app.clients import duck, openmetadata
 
 _PROBE_TTL_S = 5.0
 _probe_cache: dict[str, tuple[float, bool]] = {}
+
+
+def invalidate_probe_cache(name: str | None = None) -> None:
+    """Drop a cached probe so the next /health call re-probes immediately.
+    `name=None` drops everything. Used by /om/config and /llm/config when
+    the user changes credentials — without this, the UI would show the old
+    status for up to 5s after a successful save."""
+    if name is None:
+        _probe_cache.clear()
+    else:
+        _probe_cache.pop(name, None)
 # Per-probe lock serializes the refresh path so concurrent missers (e.g.
 # 40 threads hitting /health at the same moment) don't all fire httpx/
 # DuckDB calls in parallel. The first caller computes, the rest wait on

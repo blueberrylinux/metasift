@@ -386,6 +386,36 @@ export function testLLM(req: LLMTestRequest = {}): Promise<LLMTestResponse> {
   return postJSON<LLMTestResponse>('/llm/test', req);
 }
 
+// ── /om (OpenMetadata connection) ──────────────────────────────────────────
+//
+// The Settings page exposes JWT rotation through these so users don't have
+// to edit .env + restart after every stack-down. Server validates against
+// /v1/system/version before persisting and hot-swaps the OM client cache.
+
+export interface OMConfigResponse {
+  host: string;
+  has_token: boolean;
+  source: 'env' | 'sqlite' | 'unset';
+}
+
+export interface OMConfigRequest {
+  host: string;
+  jwt: string;
+}
+
+export function getOMConfig(): Promise<OMConfigResponse> {
+  return getJSON<OMConfigResponse>('/om/config');
+}
+
+export function setOMConfig(req: OMConfigRequest): Promise<OMConfigResponse> {
+  return postJSON<OMConfigResponse>('/om/config', req);
+}
+
+export async function resetOMConfig(): Promise<OMConfigResponse> {
+  const r = await fetch(`${API}/om/config`, { method: 'DELETE' });
+  return parseOrThrow<OMConfigResponse>(r, '/om/config');
+}
+
 // ── /review ────────────────────────────────────────────────────────────────
 //
 // Pending suggestions from the cleaning + PII scans, plus auto-drafts for

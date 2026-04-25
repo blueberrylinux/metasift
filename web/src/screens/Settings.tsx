@@ -16,15 +16,21 @@ import { AppLayout } from '../components/AppLayout';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { Skeleton } from '../components/Skeleton';
+import { toast } from 'sonner';
+
 import {
   ApiError,
   getLLMCatalog,
   getLLMConfig,
+  getOMConfig,
   resetLLMConfig,
+  resetOMConfig,
   setLLMConfig,
+  setOMConfig,
   testLLM,
   type LLMConfigResponse,
   type LLMTestResponse,
+  type OMConfigResponse,
   type TaskModelMap,
 } from '../lib/api';
 
@@ -283,8 +289,8 @@ export function Settings() {
   return (
     <AppLayout activeKey="llm">
       <PageHeader
-        title="LLM setup"
-        subtitle="Configure the provider, model, and API key that Stew and the LLM-powered engines use."
+        title="Settings"
+        subtitle="OpenMetadata connection + LLM provider, model, and API key. Both can be rotated live without restarting the API."
         chips={[
           { label: `${provider.name} · ${model.split('/').pop()?.slice(0, 24) ?? model}`, tone: 'emerald' },
           { label: configQ.data?.api_key_set ? 'API key set' : 'no API key', tone: configQ.data?.api_key_set ? 'slate' : 'amber' },
@@ -328,10 +334,11 @@ export function Settings() {
             icon="⚠"
             title="Couldn't load LLM config"
             body={(configQ.error as Error).message}
-            hint="Check that the API is reachable on /api/v1/config/llm."
+            hint="Check that the API is reachable on /api/v1/llm/config."
           />
         ) : (
           <>
+            <OMConnectionPanel />
             <DefaultsBanner applied={defaultsApplied} onApply={applyMetasiftDefaults} />
 
             {save.error instanceof ApiError && (
@@ -635,6 +642,183 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
     <div>
       <label className="block text-[11px] text-slate-500 mb-1.5 font-medium">{label}</label>
       {children}
+    </div>
+  );
+}
+
+// OpenMetadata connection — host + JWT entry. Server validates the token
+// against /v1/services/databaseServices before persisting; on success the OM client
+// cache is dropped so the next request hits OM with the new credentials.
+// Existing /env values are kept as the bootstrap fallback if the user
+// resets here. The token is never read back after save (server returns
+// only `has_token`), so the input is empty on reload.
+function OMConnectionPanel() {
+  const qc = useQueryClient();
+  const cfg = useQuery({
+    queryKey: ['om', 'config'],
+    queryFn: getOMConfig,
+    retry: false,
+  });
+  const [host, setHost] = useState('');
+  const [jwt, setJwt] = useState('');
+  const [hostDirty, setHostDirty] = useState(false);
+  const [revealJwt, setRevealJwt] = useState(false);
+
+  // Load the persisted host into the editable input once on first fetch so
+  // the user can edit without retyping. Only sync when the user hasn't
+  // started typing — otherwise refetches would clobber their draft.
+  useEffect(() => {
+    if (cfg.data && !hostDirty) setHost(cfg.data.host);
+  }, [cfg.data, hostDirty]);
+
+  const save = useMutation({
+    mutationFn: () => setOMConfig({ host: host.trim(), jwt: jwt.trim() }),
+    onSuccess: (next: OMConfigResponse) => {
+      qc.setQueryData(['om', 'config'], next);
+      qc.invalidateQueries({ queryKey: ['health'] });
+      qc.invalidateQueries({ queryKey: ['composite'] });
+      setJwt('');
+      setRevealJwt(false);
+      toast.success('OpenMetadata connection updated', {
+        description: 'Token rotated; clients reloaded.',
+      });
+    },
+  });
+
+  const reset = useMutation({
+    mutationFn: () => resetOMConfig(),
+    onSuccess: (next: OMConfigResponse) => {
+      qc.setQueryData(['om', 'config'], next);
+      qc.invalidateQueries({ queryKey: ['health'] });
+      qc.invalidateQueries({ queryKey: ['composite'] });
+      setJwt('');
+      setHost(next.host);
+      setHostDirty(false);
+      toast.success('OpenMetadata connection reset to .env');
+    },
+  });
+
+  if (cfg.isLoading) {
+    return (
+      <div className="mb-6 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+        <Skeleton className="h-[14px] w-40 mb-3" />
+        <Skeleton className="h-[36px] w-full mb-2" />
+        <Skeleton className="h-[36px] w-full" />
+      </div>
+    );
+  }
+  if (cfg.error) {
+    return (
+      <Panel error>
+        Couldn't load OpenMetadata config: {(cfg.error as Error).message}
+      </Panel>
+    );
+  }
+  const data = cfg.data!;
+  const dirty = host.trim() !== data.host || jwt.trim().length > 0;
+  const sourceTone =
+    data.source === 'sqlite'
+      ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
+      : data.source === 'env'
+        ? 'text-slate-300 border-slate-700 bg-slate-900/60'
+        : 'text-amber-300 border-amber-500/30 bg-amber-500/10';
+
+  return (
+    <div className="mb-6 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+      <div className="flex items-start justify-between mb-3 gap-4">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+            OpenMetadata connection
+          </div>
+          <div className="text-[12px] text-slate-400 mt-1 max-w-2xl">
+            Rotate the JWT after a <code className="font-mono text-slate-300">make stack-down</code>{' '}
+            without editing <code className="font-mono text-slate-300">.env</code>. The server
+            validates against <code className="font-mono text-slate-300">/v1/services/databaseServices</code>{' '}
+            before saving — a typo can't lock you out.
+          </div>
+        </div>
+        <span
+          className={
+            'shrink-0 text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ' +
+            sourceTone
+          }
+        >
+          {data.source === 'sqlite'
+            ? 'set via UI'
+            : data.source === 'env'
+              ? 'from .env'
+              : 'no token'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <FormField label="Host">
+          <input
+            type="text"
+            value={host}
+            placeholder="http://localhost:8585"
+            onChange={(e) => {
+              setHost(e.target.value);
+              setHostDirty(true);
+            }}
+            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none"
+          />
+        </FormField>
+        <FormField label="JWT token">
+          <div className="relative">
+            <input
+              type={revealJwt ? 'text' : 'password'}
+              value={jwt}
+              onChange={(e) => setJwt(e.target.value)}
+              placeholder={data.has_token ? '•••••••• (token configured)' : 'Paste ingestion-bot JWT'}
+              autoComplete="off"
+              className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 pr-16 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setRevealJwt((r) => !r)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-500 hover:text-slate-300 px-1.5 py-0.5"
+            >
+              {revealJwt ? 'hide' : 'show'}
+            </button>
+          </div>
+        </FormField>
+      </div>
+
+      {save.error instanceof ApiError && (
+        <div className="mt-3 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[12px] text-red-300">
+          {save.error.message}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 mt-4">
+        <button
+          type="button"
+          onClick={() => save.mutate()}
+          disabled={save.isPending || !dirty || !host.trim() || !jwt.trim()}
+          className="text-[12px] px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {save.isPending ? 'Saving…' : 'Save & test'}
+        </button>
+        <button
+          type="button"
+          onClick={() => reset.mutate()}
+          disabled={reset.isPending || data.source !== 'sqlite'}
+          title={data.source === 'sqlite' ? 'Drop the UI-saved values and fall back to .env' : 'Already using .env'}
+          className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {reset.isPending ? 'Resetting…' : 'Reset to .env'}
+        </button>
+        <div className="flex-1" />
+        <a
+          href="http://localhost:8585/bots/ingestion-bot"
+          target="_blank"
+          rel="noreferrer"
+          className="text-[11px] text-cyan-300 hover:text-cyan-200 underline"
+        >
+          Open ingestion-bot in OpenMetadata ↗
+        </a>
+      </div>
     </div>
   );
 }

@@ -19,7 +19,18 @@ from loguru import logger
 
 from app.api import store
 from app.api.config import api_settings
-from app.api.routers import analysis, chat, dq, health, llm, report, review, scans, viz
+from app.api.routers import (
+    analysis,
+    chat,
+    dq,
+    health,
+    llm,
+    om,
+    report,
+    review,
+    scans,
+    viz,
+)
 
 PREFIX = "/api/v1"
 
@@ -40,6 +51,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning(
             f"Reaped {reaped} zombie scan_runs row(s) left 'running' from a previous process"
         )
+    # Push any UI-saved OM connection overrides into the OM client before the
+    # first request can hit /analysis/* / /chat/* / etc. — otherwise they'd
+    # build httpx clients keyed off the stale .env token.
+    om.load_overrides_into_clients()
     logger.info(f"MetaSift API ready · sqlite={api_settings.sqlite_path}")
     yield
     logger.info("MetaSift API shutting down")
@@ -79,6 +94,7 @@ app.include_router(scans.router, prefix=PREFIX)
 app.include_router(viz.router, prefix=PREFIX)
 app.include_router(dq.router, prefix=PREFIX)
 app.include_router(report.router, prefix=PREFIX)
+app.include_router(om.router, prefix=PREFIX)
 
 # Mount the built React bundle in prod (SERVE_STATIC=1 ./web/dist exists).
 # Dev: Vite serves :5173 and proxies /api through to :8000 (see web/vite.config.ts).

@@ -364,6 +364,8 @@ MetaSift only sends structural metadata to external LLMs — column names, data 
 
 **OpenMetadata won't start / healthcheck fails.** Give it 2-3 minutes on first boot — the MySQL and Elasticsearch init is slow. Watch `make stack-logs`.
 
+**MetaSift returns 401 / "couldn't reach OpenMetadata" after a `stack-down` + `stack-up`.** `docker compose down -v` wipes the MySQL volume, which wipes the `ingestion-bot`. On the next stack-up, OM creates a new bot with a new JWT — your old token in `.env` is now stale. Rotate it: open <http://localhost:8585> → Settings → Bots → ingestion-bot → revoke + generate new token → paste into `.env` as both `OPENMETADATA_JWT_TOKEN` and `AI_SDK_TOKEN` → restart the API (`make api`). Same applies after `make reset-all`.
+
 **`openmetadata-ingestion` install fails on Windows.** You're not on WSL. This project is designed for WSL 2 / Linux — the Windows install path has pydantic version issues.
 
 **OpenRouter rate limits.** Free-tier models have per-minute request limits that vary by model (and some, like the `:free` Llama 3.3 variant served via Venice, 429 under any real load). Either click **Use MetaSift defaults** in the LLM setup modal — it routes the shared model to paid Llama 3.3 (~$0.12/1M tokens) with GPT-4o-mini for tool-calling — or pick any other provider preset and paste the corresponding key. You can also swap models live via the dropdown above the chat input.
