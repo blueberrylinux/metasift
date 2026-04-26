@@ -36,7 +36,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import errors, store
-from app.api.deps import OmOk
+from app.api.deps import DuckOk, OmOk
 from app.api.schemas import (
     BulkDocRequest,
     ScanRun,
@@ -226,21 +226,25 @@ def _sse_response(events_coro: AsyncIterator[dict[str, Any]]) -> EventSourceResp
 
 
 @router.post("/deep-scan")
-async def deep_scan(om_ok: OmOk) -> EventSourceResponse:
+async def deep_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     """Stale-description + quality-scoring pass. LLM-heavy — typically 30-60s
     on the demo catalog. Populates cleaning_results."""
     if not om_ok:
         raise errors.om_unreachable()
+    if not duck_ok:
+        raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("deep_scan")
     return _sse_response(_stream_engine_scan("deep_scan", run_id, cleaning.run_deep_scan))
 
 
 @router.post("/pii-scan")
-async def pii_scan(om_ok: OmOk) -> EventSourceResponse:
+async def pii_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     """Heuristic PII classification per column. Fast — no LLM calls.
     Populates pii_results. Single `done` frame with the summary."""
     if not om_ok:
         raise errors.om_unreachable()
+    if not duck_ok:
+        raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("pii_scan")
     return _sse_response(
         _stream_engine_scan("pii_scan", run_id, cleaning.run_pii_scan, accepts_progress=False)
@@ -248,11 +252,13 @@ async def pii_scan(om_ok: OmOk) -> EventSourceResponse:
 
 
 @router.post("/dq-explain")
-async def dq_explain(om_ok: OmOk) -> EventSourceResponse:
+async def dq_explain(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     """LLM-written explanations for each failing DQ test. One LLM call per
     failure. Populates dq_explanations."""
     if not om_ok:
         raise errors.om_unreachable()
+    if not duck_ok:
+        raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("dq_explain")
     return _sse_response(
         _stream_engine_scan("dq_explain", run_id, cleaning.run_dq_explanations)
@@ -260,11 +266,13 @@ async def dq_explain(om_ok: OmOk) -> EventSourceResponse:
 
 
 @router.post("/dq-recommend")
-async def dq_recommend(om_ok: OmOk) -> EventSourceResponse:
+async def dq_recommend(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     """Per-table recommendations for DQ tests that should exist. One LLM call
     per table. Populates dq_recommendations."""
     if not om_ok:
         raise errors.om_unreachable()
+    if not duck_ok:
+        raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("dq_recommend")
     return _sse_response(
         _stream_engine_scan("dq_recommend", run_id, stewardship.run_dq_recommendations)
@@ -272,12 +280,14 @@ async def dq_recommend(om_ok: OmOk) -> EventSourceResponse:
 
 
 @router.post("/bulk-doc")
-async def bulk_doc(req: BulkDocRequest, om_ok: OmOk) -> EventSourceResponse:
+async def bulk_doc(req: BulkDocRequest, om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     """Auto-document every undocumented table in a schema. Typically agent-
     triggered (`auto-document the sales schema`), exposed here for
     programmatic / UI-driven use. Writes drafts to doc_suggestions."""
     if not om_ok:
         raise errors.om_unreachable()
+    if not duck_ok:
+        raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("bulk_doc")
     return _sse_response(
         _stream_engine_scan(

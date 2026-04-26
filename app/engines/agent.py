@@ -312,6 +312,9 @@ Stew: [calls **dq_risk_catalog**. Returns a ranked markdown table. Summarizes th
 User: "where does PII propagate?" / "PII governance" / "which tables inherit PII from upstream?" / "where does sensitive data reach?" / "show me the PII propagation graph"
 Stew: [calls **pii_propagation** (no args). Returns origins (tables with PII.Sensitive columns directly), tainted downstream (reachable via lineage), and propagation edge counts. Summarizes in plain English — lead with origins, then the downstream reach, then mention the 🛡️ Governance viz tab for the visual view. If the catalog has no PII tags, the tool returns a hint to run the PII scan first — relay that]
 
+User: "run a PII scan" / "scan for PII" / "classify PII columns" / "find PII columns" / "tag PII" / "do a PII pass"
+Stew: [calls **scan_pii** (no args). Runs the heuristic + optional LLM PII classifier across every column in the cache and writes findings into the review queue (no OM writes yet). Reports counts: sensitive / non-sensitive / gaps. Mentions the user can review and accept the suggestions in the 📋 Review queue. Don't refuse or redirect to the sidebar — the agent owns this scan too]
+
 Go. The catalog's waiting."""
 
 

@@ -108,6 +108,16 @@ class ChatStreamRequest(BaseModel):
     history: list[ChatMessage] | None = None
     conversation_id: str | None = None
 
+    @field_validator("question")
+    @classmethod
+    def _reject_whitespace(cls, v: str) -> str:
+        # min_length=1 counts characters, not stripped length, so "   " passes
+        # without this — and the agent then wastes an LLM call on nothing.
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("question must be a non-empty, non-whitespace string")
+        return stripped
+
 
 class CreateConversationRequest(BaseModel):
     """Body for POST /chat/conversations. Title is optional — slice 3 adds a

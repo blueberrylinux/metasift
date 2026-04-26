@@ -84,10 +84,15 @@ def no_metadata_loaded() -> ApiError:
 
 
 def invalid_fqn(fqn: str, *, examples: list[str] | None = None) -> ApiError:
+    """Raised when the user references a fully-qualified name that doesn't
+    exist in `om_tables`. 404 is the natural semantic for browser-driven
+    callers (e.g. GET /dq/impact/{fqn}) — the resource genuinely is not
+    found, as opposed to "your request is malformed" which is 400."""
     return ApiError(
         ErrorCode.INVALID_FQN,
         f"FQN `{fqn}` not found in catalog.",
         detail={"fqn": fqn, "examples": examples or []},
+        status_code=status.HTTP_404_NOT_FOUND,
     )
 
 

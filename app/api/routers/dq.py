@@ -268,9 +268,11 @@ def risk(duck_ok: DuckOk, limit: int = 20) -> DQRiskResponse:
 @router.get("/impact/{fqn:path}", response_model=DQImpactResponse)
 def impact(fqn: str, duck_ok: DuckOk) -> DQImpactResponse:
     """Per-table drilldown: currently failing tests plus their downstream
-    blast radius. Returns zero-counts (not 404) for a valid FQN with no
+    blast radius. Returns zero-counts (not 404) for a VALID FQN with no
     failing tests so the UI can render a "clean" empty state without a
-    second HTTP status to handle."""
+    second HTTP status to handle. UNKNOWN FQNs (not in om_tables) DO 404 —
+    we used to silently return zeros for those too, which made non-existent
+    tables look identical to clean-but-existent ones."""
     if not duck_ok:
         raise errors.no_metadata_loaded()
     if not fqn.strip():
@@ -278,6 +280,17 @@ def impact(fqn: str, duck_ok: DuckOk) -> DQImpactResponse:
             errors.ErrorCode.INVALID_REQUEST,
             "fqn must be non-empty.",
         )
+    # Validate the FQN exists in the cache before computing impact. Without
+    # this, a typo'd or hallucinated FQN looks indistinguishable from a real
+    # leaf table with no failing tests / no downstream — both return zeros.
+    from app.clients import duck
+
+    exists = duck.query(
+        "SELECT 1 FROM om_tables WHERE fullyQualifiedName = ?",
+        [fqn.strip()],
+    )
+    if exists.empty:
+        raise errors.invalid_fqn(fqn)
     try:
         data = analysis.dq_impact(fqn)
     except Exception as e:
