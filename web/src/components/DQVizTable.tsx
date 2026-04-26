@@ -39,10 +39,23 @@ const FIX_TYPE_CHIPS: Record<string, string> = {
 // Common shell + cell typography. Re-used by both tables so they read
 // identically — top-aligned, monospace identifier cells, body-font for
 // LLM text, alternating row background for scan-ability.
-const CELL_BASE = 'align-top px-3 py-2.5 text-[12px] text-slate-200';
+//
+// Splits into ID-cell vs prose-cell classes:
+// - ID cells: monospace 11px, no wrap (FQN / column name / chip), so the
+//   identifier column reads at-a-glance and never sprawls into multiple
+//   lines for short strings.
+// - Prose cells: 13px sans, leading-relaxed (1.625), so multi-sentence
+//   LLM output breathes instead of feeling jammed.
+//
+// Both share generous py-4 / px-4 padding so adjacent rows don't run into
+// each other visually.
+const CELL_PROSE =
+  'align-top px-4 py-4 text-[13px] leading-relaxed text-slate-200';
+const CELL_ID =
+  'align-top px-4 py-4 text-[12px] font-mono text-slate-300 whitespace-nowrap';
 const HEADER_BASE =
-  'sticky top-0 z-10 bg-slate-900/95 backdrop-blur-sm text-left px-3 py-2.5 ' +
-  'text-[12px] font-semibold text-slate-100 border-b border-slate-700';
+  'sticky top-0 z-10 bg-slate-900/95 backdrop-blur-sm text-left px-4 py-3 ' +
+  'text-[12px] font-semibold text-slate-100 uppercase tracking-wider border-b border-slate-700';
 
 // ── DQ failures ────────────────────────────────────────────────────────────
 
@@ -96,17 +109,30 @@ export function DQFailuresVizTable() {
           </span>
         )}
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[70vh]">
-        <table className="w-full border-collapse">
+      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[72vh]">
+        <table
+          className="w-full border-collapse table-fixed"
+          style={{ minWidth: 1500 }}
+        >
+          <colgroup>
+            <col style={{ width: 200 }} />
+            <col style={{ width: 130 }} />
+            <col style={{ width: 220 }} />
+            <col style={{ width: 240 }} />
+            <col style={{ width: 240 }} />
+            <col style={{ width: 240 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 240 }} />
+          </colgroup>
           <thead>
             <tr>
-              <th className={HEADER_BASE} style={{ width: 180 }}>Table</th>
-              <th className={HEADER_BASE} style={{ width: 110 }}>Column</th>
-              <th className={HEADER_BASE} style={{ width: 200 }}>Definition</th>
-              <th className={HEADER_BASE} style={{ width: 240 }}>Failure message</th>
-              <th className={HEADER_BASE} style={{ width: 240 }}>Summary</th>
-              <th className={HEADER_BASE} style={{ width: 240 }}>Likely cause</th>
-              <th className={HEADER_BASE} style={{ width: 140 }}>Fix type</th>
+              <th className={HEADER_BASE}>Table</th>
+              <th className={HEADER_BASE}>Column</th>
+              <th className={HEADER_BASE}>Definition</th>
+              <th className={HEADER_BASE}>Failure message</th>
+              <th className={HEADER_BASE}>Summary</th>
+              <th className={HEADER_BASE}>Likely cause</th>
+              <th className={HEADER_BASE}>Fix type</th>
               <th className={HEADER_BASE}>Suggested fix</th>
             </tr>
           </thead>
@@ -126,26 +152,22 @@ function DQFailureRow({ row, alt }: { row: DQFailure; alt: boolean }) {
   const bg = alt ? 'bg-slate-900/30' : 'bg-slate-950/40';
   return (
     <tr className={`${bg} border-b border-slate-800/60`}>
-      <td className={CELL_BASE + ' font-mono text-[11px] whitespace-nowrap'}>
+      <td className={CELL_ID + ' text-slate-200'}>
         <CopyableFQN
           fqn={row.table_fqn}
           variant="short"
-          className="font-mono text-[11px] text-slate-200"
+          className="font-mono text-[12px] text-slate-200"
         />
       </td>
-      <td className={CELL_BASE + ' font-mono text-[11px] text-slate-300'}>
-        {row.column_name || '—'}
-      </td>
-      <td className={CELL_BASE + ' font-mono text-[11px] text-slate-300'}>
-        {row.test_definition_name || '—'}
-      </td>
-      <td className={CELL_BASE}>{row.result_message || '—'}</td>
-      <td className={CELL_BASE}>{ex?.summary || <Pending />}</td>
-      <td className={CELL_BASE}>{ex?.likely_cause || <Pending />}</td>
-      <td className={CELL_BASE}>
+      <td className={CELL_ID}>{row.column_name || '—'}</td>
+      <td className={CELL_ID}>{row.test_definition_name || '—'}</td>
+      <td className={CELL_PROSE}>{row.result_message || '—'}</td>
+      <td className={CELL_PROSE}>{ex?.summary || <Pending />}</td>
+      <td className={CELL_PROSE}>{ex?.likely_cause || <Pending />}</td>
+      <td className={CELL_PROSE}>
         {ex?.fix_type ? <FixTypeChip kind={ex.fix_type} /> : <Pending />}
       </td>
-      <td className={CELL_BASE}>{ex?.next_step || <Pending />}</td>
+      <td className={CELL_PROSE}>{ex?.next_step || <Pending />}</td>
     </tr>
   );
 }
@@ -233,15 +255,26 @@ export function DQGapsVizTable() {
       <div className="text-[12px] text-slate-400 mb-3 font-mono">
         DQ recommendation gaps — {q.data.rows.length} total · {counts.critical ?? 0} critical · {counts.recommended ?? 0} recommended · {counts['nice-to-have'] ?? 0} nice-to-have
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[70vh]">
-        <table className="w-full border-collapse">
+      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[72vh]">
+        <table
+          className="w-full border-collapse table-fixed"
+          style={{ minWidth: 1100 }}
+        >
+          <colgroup>
+            <col style={{ width: 200 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 220 }} />
+            <col style={{ width: 180 }} />
+            <col style={{ width: 130 }} />
+            <col />
+          </colgroup>
           <thead>
             <tr>
-              <th className={HEADER_BASE} style={{ width: 180 }}>Table</th>
-              <th className={HEADER_BASE} style={{ width: 130 }}>Column</th>
-              <th className={HEADER_BASE} style={{ width: 200 }}>Test definition</th>
-              <th className={HEADER_BASE} style={{ width: 160 }}>Parameters</th>
-              <th className={HEADER_BASE} style={{ width: 140 }}>Severity</th>
+              <th className={HEADER_BASE}>Table</th>
+              <th className={HEADER_BASE}>Column</th>
+              <th className={HEADER_BASE}>Test definition</th>
+              <th className={HEADER_BASE}>Parameters</th>
+              <th className={HEADER_BASE}>Severity</th>
               <th className={HEADER_BASE}>Rationale</th>
             </tr>
           </thead>
@@ -265,21 +298,21 @@ function DQGapRow({ row, alt }: { row: DQRecommendation; alt: boolean }) {
     : '—';
   return (
     <tr className={`${bg} border-b border-slate-800/60`}>
-      <td className={CELL_BASE + ' font-mono text-[11px] whitespace-nowrap'}>
+      <td className={CELL_ID + ' text-slate-200'}>
         <CopyableFQN
           fqn={row.table_fqn}
           variant="short"
-          className="font-mono text-[11px] text-slate-200"
+          className="font-mono text-[12px] text-slate-200"
         />
       </td>
-      <td className={CELL_BASE + ' font-mono text-[11px] text-slate-300'}>
-        {row.column_name || <span className="italic text-slate-500">(table-level)</span>}
+      <td className={CELL_ID}>
+        {row.column_name || (
+          <span className="italic text-slate-500">(table-level)</span>
+        )}
       </td>
-      <td className={CELL_BASE + ' font-mono text-[11px] text-slate-300'}>
-        {row.test_definition}
-      </td>
-      <td className={CELL_BASE + ' font-mono text-[11px] text-slate-400'}>{params}</td>
-      <td className={CELL_BASE}>
+      <td className={CELL_ID}>{row.test_definition}</td>
+      <td className={CELL_ID + ' text-slate-400'}>{params}</td>
+      <td className="align-top px-4 py-4">
         <span
           className={
             'text-[11px] font-mono px-2 py-0.5 rounded border whitespace-nowrap inline-block ' +
@@ -289,7 +322,7 @@ function DQGapRow({ row, alt }: { row: DQRecommendation; alt: boolean }) {
           {row.severity}
         </span>
       </td>
-      <td className={CELL_BASE}>{row.rationale || '—'}</td>
+      <td className={CELL_PROSE}>{row.rationale || '—'}</td>
     </tr>
   );
 }
