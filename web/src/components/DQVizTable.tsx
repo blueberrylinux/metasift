@@ -40,19 +40,24 @@ const FIX_TYPE_CHIPS: Record<string, string> = {
 // identically — top-aligned, monospace identifier cells, body-font for
 // LLM text, alternating row background for scan-ability.
 //
-// Splits into ID-cell vs prose-cell classes:
-// - ID cells: monospace 11px, no wrap (FQN / column name / chip), so the
-//   identifier column reads at-a-glance and never sprawls into multiple
-//   lines for short strings.
-// - Prose cells: 13px sans, leading-relaxed (1.625), so multi-sentence
-//   LLM output breathes instead of feeling jammed.
+// Three cell flavors:
+// - CELL_ID: monospace 12px, no-wrap, slate-300. Used for short identifiers
+//   (FQN, column name, definition, chip labels) so they stay one-line tight.
+// - CELL_CODE: monospace 12px, *break-all* + overflow-hidden, slate-400.
+//   Used for code-shaped values like regex parameters that have no word
+//   boundaries — wraps mid-token instead of painting over adjacent cells.
+// - CELL_PROSE: 13px sans, leading-relaxed (1.625), slate-200. Used for
+//   multi-sentence LLM output (failure messages, summaries, rationales)
+//   so the text breathes instead of feeling jammed.
 //
-// Both share generous py-4 / px-4 padding so adjacent rows don't run into
-// each other visually.
+// All three share generous py-4 / px-4 padding so adjacent rows don't run
+// into each other visually.
 const CELL_PROSE =
   'align-top px-4 py-4 text-[13px] leading-relaxed text-slate-200';
 const CELL_ID =
   'align-top px-4 py-4 text-[12px] font-mono text-slate-300 whitespace-nowrap';
+const CELL_CODE =
+  'align-top px-4 py-4 text-[11px] font-mono text-slate-400 break-all leading-relaxed';
 const HEADER_BASE =
   'sticky top-0 z-10 bg-slate-900/95 backdrop-blur-sm text-left px-4 py-3 ' +
   'text-[12px] font-semibold text-slate-100 uppercase tracking-wider border-b border-slate-700';
@@ -109,7 +114,7 @@ export function DQFailuresVizTable() {
           </span>
         )}
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[72vh]">
+      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
           className="w-full border-collapse table-fixed"
           style={{ minWidth: 1500 }}
@@ -255,7 +260,7 @@ export function DQGapsVizTable() {
       <div className="text-[12px] text-slate-400 mb-3 font-mono">
         DQ recommendation gaps — {q.data.rows.length} total · {counts.critical ?? 0} critical · {counts.recommended ?? 0} recommended · {counts['nice-to-have'] ?? 0} nice-to-have
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[72vh]">
+      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
           className="w-full border-collapse table-fixed"
           style={{ minWidth: 1100 }}
@@ -311,7 +316,7 @@ function DQGapRow({ row, alt }: { row: DQRecommendation; alt: boolean }) {
         )}
       </td>
       <td className={CELL_ID}>{row.test_definition}</td>
-      <td className={CELL_ID + ' text-slate-400'}>{params}</td>
+      <td className={CELL_CODE}>{params}</td>
       <td className="align-top px-4 py-4">
         <span
           className={
