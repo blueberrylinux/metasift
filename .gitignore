@@ -45,3 +45,4 @@ web/vite.config.d.ts
 # just don't push it.
 /SANDBOX_DEPLOYMENT_PLAN.md
 /PRE_SUBMISSION_AUDIT.md
+/WEBSITE_UPDATE_PLAN.md
