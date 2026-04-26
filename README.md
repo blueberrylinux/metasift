@@ -288,14 +288,14 @@ cp .env.example .env
 # 4. Seed the demo catalog
 make seed
 
-# 5a. Launch the v0.2 app (FastAPI + React — current)
-make api                      # FastAPI on :8000
-cd web && npm ci && npm run dev   # Vite dev server on :5173
+# 5. Launch the v0.2 app (FastAPI + React — current)
+make run
+# → FastAPI on :8000, Vite dev server on :5173
 # → open http://localhost:5173
 
-# 5b. (Optional) Launch v0.1 Streamlit instead — preserved for the port story
+# Optional: see the original v0.1 Streamlit demo
 git checkout v0.1-streamlit && make run
-# → open http://localhost:8501
+# → open http://localhost:8501  (on the v0.1 tag, `make run` runs Streamlit)
 ```
 
 ### First-launch flow
@@ -346,11 +346,13 @@ make stack-up      # start OpenMetadata
 make stack-down    # stop + wipe volumes
 make stack-logs    # tail server logs
 make seed          # populate demo catalog
-make api           # launch FastAPI (v0.2)            — http://localhost:8000
-make run           # launch Streamlit (v0.1 only)     — http://localhost:8501
+make run           # launch the v0.2 React app (api on :8000 + Vite on :5173, parallel)
+make api           # launch only the FastAPI backend (port 8000)
+make web           # launch only the Vite dev server (port 5173)
 make reset-all     # wipe + reseed (sqlite + duck + OM volumes)
 make lint          # ruff check + format
 make test          # pytest
+# v0.1 Streamlit demo: git checkout v0.1-streamlit && make run
 ```
 
 ## Privacy
