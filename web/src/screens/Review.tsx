@@ -41,6 +41,12 @@ export function Review() {
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [actStatus, setActStatus] = useState<Record<string, ActStatus>>({});
+  // Per-suggestion in-flight flag. Lifted out of DiffPanel so a slow PATCH
+  // on item A doesn't keep item B's buttons disabled when the user
+  // switches selection mid-flight, and so the left list can show "this row
+  // is being processed" rather than the user wondering why nothing's
+  // happening. Keys mirror actStatus.
+  const [acting, setActing] = useState<Record<string, boolean>>({});
 
   const q = useQuery({
     queryKey: ['review'],
@@ -88,6 +94,22 @@ export function Review() {
 
   const markActed = (key: string, status: ActStatus) =>
     setActStatus((m) => ({ ...m, [key]: status }));
+
+  // Wrap an async per-suggestion action so its `acting[key]` flag flips on
+  // entry and clears on exit, regardless of success / failure. Errors flow
+  // to the caller (DiffPanel.guard) for inline rendering — we don't swallow.
+  const track = async (key: string, fn: () => Promise<void>) => {
+    setActing((m) => ({ ...m, [key]: true }));
+    try {
+      await fn();
+    } finally {
+      setActing((m) => {
+        const next = { ...m };
+        delete next[key];
+        return next;
+      });
+    }
+  };
 
   const bulkPending = visible.length;
 
@@ -232,6 +254,7 @@ export function Review() {
                   item={item}
                   selected={selected?.key === item.key}
                   status={actStatus[item.key]}
+                  pending={!!acting[item.key]}
                   onSelect={() => setSelectedKey(item.key)}
                 />
               ))}
@@ -252,33 +275,40 @@ export function Review() {
                 <DiffPanel
                   item={selected}
                   status={actStatus[selected.key]}
-                  onAccept={async () => {
+                  pending={!!acting[selected.key]}
+                  onAccept={() =>
                     // Let errors propagate — DiffPanel.guard captures them and
                     // renders inline. Wrapping here and swallowing would hide
                     // 502 PATCH_FAILED from the user.
-                    await acceptReview(selected.key);
-                    markActed(selected.key, 'accepted');
-                    toast.success('Accepted · PATCH dispatched', {
-                      description: shortFQN(selected.fqn),
-                    });
-                    invalidate();
-                  }}
-                  onAcceptEdited={async (value: string) => {
-                    await acceptEditedReview(selected.key, value);
-                    markActed(selected.key, 'accepted_edited');
-                    toast.success('Saved & applied', {
-                      description: shortFQN(selected.fqn),
-                    });
-                    invalidate();
-                  }}
-                  onReject={async () => {
-                    await rejectReview(selected.key);
-                    markActed(selected.key, 'rejected');
-                    toast('Rejected', {
-                      description: shortFQN(selected.fqn),
-                    });
-                    invalidate();
-                  }}
+                    track(selected.key, async () => {
+                      await acceptReview(selected.key);
+                      markActed(selected.key, 'accepted');
+                      toast.success('Accepted · PATCH dispatched', {
+                        description: shortFQN(selected.fqn),
+                      });
+                      invalidate();
+                    })
+                  }
+                  onAcceptEdited={(value: string) =>
+                    track(selected.key, async () => {
+                      await acceptEditedReview(selected.key, value);
+                      markActed(selected.key, 'accepted_edited');
+                      toast.success('Saved & applied', {
+                        description: shortFQN(selected.fqn),
+                      });
+                      invalidate();
+                    })
+                  }
+                  onReject={() =>
+                    track(selected.key, async () => {
+                      await rejectReview(selected.key);
+                      markActed(selected.key, 'rejected');
+                      toast('Rejected', {
+                        description: shortFQN(selected.fqn),
+                      });
+                      invalidate();
+                    })
+                  }
                 />
               ) : (
                 <div className="p-8">
@@ -332,11 +362,13 @@ function ReviewListRow({
   item,
   selected,
   status,
+  pending,
   onSelect,
 }: {
   item: ReviewItem;
   selected: boolean;
   status?: ActStatus;
+  pending?: boolean;
   onSelect: () => void;
 }) {
   const sev = severityOf(item);
@@ -395,7 +427,15 @@ function ReviewListRow({
                 {(item.confidence * 100).toFixed(0)}%
               </span>
             </div>
-            {status && (
+            {pending ? (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 inline-flex items-center gap-1">
+                <span
+                  className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"
+                  aria-hidden
+                />
+                processing
+              </span>
+            ) : status ? (
               <span
                 className={
                   'text-[10px] font-mono px-1.5 py-0.5 rounded ' +
@@ -406,7 +446,7 @@ function ReviewListRow({
               >
                 {status.replace('_', ' ')}
               </span>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -419,22 +459,27 @@ function ReviewListRow({
 function DiffPanel({
   item,
   status,
+  pending,
   onAccept,
   onAcceptEdited,
   onReject,
 }: {
   item: ReviewItem;
   status?: ActStatus;
+  // True while THIS suggestion's mutation is in flight (lifted to the
+  // Review parent so concurrent mutations on different rows don't fight
+  // over a single shared busy flag).
+  pending: boolean;
   onAccept: () => void | Promise<void>;
   onAcceptEdited: (value: string) => void | Promise<void>;
   onReject: () => void | Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.new);
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const sev = severityOf(item);
+  const busy = pending;
 
   // Reset local edit state when the selected card changes. Keyed on item.key
   // rather than item.new so an in-progress edit doesn't get clobbered by a
@@ -446,8 +491,10 @@ function DiffPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.key]);
 
+  // No local busy state — `pending` from the parent is the single source of
+  // truth. We still wrap action callbacks in a guard so async errors flow
+  // into inline `err` rather than blowing up unhandled.
   const guard = async (fn: () => Promise<void> | void) => {
-    setBusy(true);
     setErr(null);
     try {
       await fn();
@@ -459,8 +506,6 @@ function DiffPanel({
             ? e.message
             : String(e),
       );
-    } finally {
-      setBusy(false);
     }
   };
 
