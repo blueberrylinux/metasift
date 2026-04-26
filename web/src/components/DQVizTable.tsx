@@ -54,8 +54,15 @@ const FIX_TYPE_CHIPS: Record<string, string> = {
 // into each other visually.
 const CELL_PROSE =
   'align-top px-4 py-4 text-[13px] leading-relaxed text-slate-200';
+// `overflow-hidden text-ellipsis` is defense-in-depth: with table-fixed +
+// explicit colgroup widths, content longer than its column gets clipped
+// with an ellipsis instead of painting horizontally over the next cell.
+// In practice the colgroup widths below are sized to fit the longest known
+// content; the ellipsis only kicks in for unforeseen / future-too-long
+// strings (e.g. very long bot-generated column names) so they degrade
+// gracefully without obscuring adjacent columns.
 const CELL_ID =
-  'align-top px-4 py-4 text-[12px] font-mono text-slate-300 whitespace-nowrap';
+  'align-top px-4 py-4 text-[12px] font-mono text-slate-300 whitespace-nowrap overflow-hidden text-ellipsis';
 const CELL_CODE =
   'align-top px-4 py-4 text-[11px] font-mono text-slate-400 break-all leading-relaxed';
 const HEADER_BASE =
@@ -117,16 +124,20 @@ export function DQFailuresVizTable() {
       <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
           className="w-full border-collapse table-fixed"
-          style={{ minWidth: 1500 }}
+          style={{ minWidth: 1700 }}
         >
           <colgroup>
-            <col style={{ width: 200 }} />
-            <col style={{ width: 130 }} />
+            {/* Table column 280: fits "analytics.users.customer_profiles"
+                (33 chars × 7px ≈ 231px) with breathing room. */}
+            <col style={{ width: 280 }} />
+            {/* Column 160: fits "user_sessions_started_at" et al. */}
+            <col style={{ width: 160 }} />
+            {/* Definition 220: fits "columnValuesToMatchRegex". */}
             <col style={{ width: 220 }} />
             <col style={{ width: 240 }} />
             <col style={{ width: 240 }} />
             <col style={{ width: 240 }} />
-            <col style={{ width: 150 }} />
+            <col style={{ width: 160 }} />
             <col style={{ width: 240 }} />
           </colgroup>
           <thead>
@@ -263,13 +274,15 @@ export function DQGapsVizTable() {
       <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
           className="w-full border-collapse table-fixed"
-          style={{ minWidth: 1100 }}
+          style={{ minWidth: 1200 }}
         >
           <colgroup>
-            <col style={{ width: 200 }} />
-            <col style={{ width: 150 }} />
-            <col style={{ width: 220 }} />
+            {/* Same Table column width as DQ failures so the two tabs read
+                identically when switching between them. */}
+            <col style={{ width: 280 }} />
             <col style={{ width: 180 }} />
+            <col style={{ width: 220 }} />
+            <col style={{ width: 200 }} />
             <col style={{ width: 130 }} />
             <col />
           </colgroup>
