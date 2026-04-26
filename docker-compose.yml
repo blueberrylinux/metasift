@@ -1,17 +1,24 @@
-# MetaSift dev stack
+# MetaSift dev stack — trimmed OM for local development
 #
 # Starts:
-#   - openmetadata-server (port 8585, UI + API + MCP at /mcp)
-#   - mysql (metadata store)
-#   - elasticsearch (search index)
-#   - openmetadata-ingestion (Airflow-based, for running ingestion workflows)
+#   - mysql (OM metadata store)
+#   - elasticsearch (OM search index)
+#   - migrate (one-shot OM schema migration)
+#   - openmetadata-server (port 8585 — UI + REST API + MCP at /mcp)
+#
+# Deliberately NOT included:
+#   - Airflow / openmetadata-ingestion — scheduled workflows, profiler, DQ runs.
+#     Add it back if you want in-UI "Deploy" on ingestion pipelines. For now,
+#     ingestion is run one-off via the CLI (`metadata ingest -c config.yaml`)
+#     or pulled in ad-hoc. Keeps the stack at ~6GB RAM instead of ~9-10GB.
 #
 # Usage:
 #   docker compose up -d           # bring everything up
 #   docker compose logs -f server  # watch server startup
 #   docker compose down -v         # stop + wipe volumes
 #
-# OpenMetadata publishes an official compose file; this is a trimmed version.
+# For production, use OpenMetadata's official compose file instead; this one is
+# intentionally trimmed for MetaSift development.
 # Reference: https://docs.open-metadata.org/latest/deployment/docker
 
 name: metasift

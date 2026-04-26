@@ -78,7 +78,7 @@ def composite_gauge() -> go.Figure | None:
             title={"text": "Composite Score<br><sub>target: 80%</sub>"},
         )
     )
-    fig.update_layout(height=380, margin={"t": 50, "b": 20, "l": 20, "r": 20})
+    fig.update_layout(height=320, margin={"t": 50, "b": 20, "l": 20, "r": 20})
     return fig
 
 
@@ -185,7 +185,7 @@ def lineage_dag() -> go.Figure | None:
 
     fig = go.Figure(data=[edge_trace, node_trace])
     fig.update_layout(
-        height=520,
+        height=440,
         margin={"t": 40, "b": 20, "l": 20, "r": 20},
         xaxis={"visible": False},
         yaxis={"visible": False},
@@ -367,7 +367,7 @@ def governance_lineage_dag() -> go.Figure | None:
 
     fig = go.Figure(data=[other_trace, prop_trace, node_trace])
     fig.update_layout(
-        height=540,
+        height=460,
         margin={"t": 60, "b": 40, "l": 20, "r": 20},
         xaxis={"visible": False},
         yaxis={"visible": False},
@@ -500,7 +500,7 @@ def catalog_treemap() -> go.Figure | None:
         )
     )
     fig.update_layout(
-        height=520,
+        height=460,
         margin={"t": 30, "b": 10, "l": 10, "r": 10},
         title="Catalog map — tiles sized by column count, colored by PII.Sensitive share",
     )
@@ -621,20 +621,38 @@ def stewardship_leaderboard() -> go.Figure | None:
         xaxis="x2",
     )
 
+    # Orphan callout lives on its own row above the chart instead of being
+    # appended to the title — when the title wrapped, it collided with the
+    # top-axis "Coverage %" label below it.
     orphan_note = (
-        f" · {len(orphans_df)} orphan table(s) — see chat for `ownership_report`"
+        f"{len(orphans_df)} orphan table(s) — ask Stew for ownership_report"
         if not orphans_df.empty
-        else " · no orphans 🎉"
+        else "no orphans"
     )
     fig.update_layout(
         height=max(320, 70 * len(df) + 80),
-        title=f"Stewardship leaderboard — tables owned vs coverage{orphan_note}",
+        title={"text": "Stewardship leaderboard — tables owned vs coverage", "y": 0.97},
         barmode="group",
-        margin={"t": 60, "b": 40, "l": 140, "r": 80},
+        # Wider top margin so the title, orphan-note annotation, and the
+        # secondary x-axis title each get their own horizontal band.
+        margin={"t": 110, "b": 40, "l": 140, "r": 80},
         xaxis={"title": "Tables owned", "side": "bottom"},
         xaxis2={"title": "Coverage %", "overlaying": "x", "side": "top", "range": [0, 110]},
         yaxis={"autorange": "reversed"},
         legend={"orientation": "h", "y": -0.18, "x": 0.5, "xanchor": "center"},
+        annotations=[
+            {
+                "text": orphan_note,
+                "x": 0,
+                "xref": "paper",
+                "y": 1.06,
+                "yref": "paper",
+                "xanchor": "left",
+                "yanchor": "bottom",
+                "showarrow": False,
+                "font": {"size": 11, "color": "rgba(148,163,184,0.85)"},
+            }
+        ],
     )
     return fig
 
@@ -839,10 +857,15 @@ def dq_failure_table() -> go.Figure | None:
 
     fig = go.Figure(
         go.Table(
-            columnwidth=[80, 110, 70, 110, 180, 180, 180, 100, 180],
+            # Eight columns (no separate "Test" column — the test_name is
+            # internal noise that just truncates to "invoice_a…" in the
+            # available width, and Table + Column + Definition already
+            # uniquely identifies the failing test for the steward).
+            # Identifier columns sized for their actual content; the four
+            # text-heavy columns split the remaining width evenly.
+            columnwidth=[150, 90, 170, 240, 240, 240, 130, 240],
             header={
                 "values": [
-                    "<b>Test</b>",
                     "<b>Table</b>",
                     "<b>Column</b>",
                     "<b>Definition</b>",
@@ -853,13 +876,12 @@ def dq_failure_table() -> go.Figure | None:
                     "<b>Suggested fix</b>",
                 ],
                 "fill_color": "#111827",
-                "font": {"color": "#f9fafb", "size": 12},
+                "font": {"color": "#f9fafb", "size": 13},
                 "align": "left",
-                "height": 30,
+                "height": 36,
             },
             cells={
                 "values": [
-                    df["test_name"],
                     [_short(f) for f in df["table_fqn"]],
                     [_dash(c) for c in df["column_name"]],
                     df["test_definition"],
@@ -870,15 +892,18 @@ def dq_failure_table() -> go.Figure | None:
                     [_dash(n) for n in df["next_step"]],
                 ],
                 "fill_color": [["#1f2937" if i % 2 else "#111827" for i in range(len(df))]],
-                "font": {"color": "#e5e7eb", "size": 11},
+                "font": {"color": "#e5e7eb", "size": 12},
                 "align": "left",
-                "height": 64,
+                # Tall enough for ~5 wrapped lines of 12px text — the text
+                # columns can hit that on dense LLM explanations. Was 64,
+                # which clipped multi-line content into the next row.
+                "height": 96,
             },
         )
     )
     explained = int((df["summary"].str.strip() != "").sum())
     fig.update_layout(
-        height=max(240, 80 * len(df) + 120),
+        height=max(360, 110 * len(df) + 160),
         margin={"t": 60, "b": 20, "l": 10, "r": 10},
         title=(
             f"Failing DQ checks — {len(df)} total · {explained} explained "
@@ -940,7 +965,10 @@ def dq_recommendations_table() -> go.Figure | None:
 
     fig = go.Figure(
         go.Table(
-            columnwidth=[110, 90, 130, 100, 100, 220],
+            # Rationale gets ~40% of the table — it's the column that holds
+            # multi-sentence LLM output. Was 220 against 530 of header cols
+            # which left 4-line rationales overflowing the cell.
+            columnwidth=[120, 100, 140, 100, 110, 320],
             header={
                 "values": [
                     "<b>Table</b>",
@@ -951,9 +979,9 @@ def dq_recommendations_table() -> go.Figure | None:
                     "<b>Rationale</b>",
                 ],
                 "fill_color": "#111827",
-                "font": {"color": "#f9fafb", "size": 12},
+                "font": {"color": "#f9fafb", "size": 13},
                 "align": "left",
-                "height": 30,
+                "height": 36,
             },
             cells={
                 "values": [
@@ -965,15 +993,18 @@ def dq_recommendations_table() -> go.Figure | None:
                     df["rationale"],
                 ],
                 "fill_color": [row_fill],
-                "font": {"color": "#f9fafb", "size": 11},
+                "font": {"color": "#f9fafb", "size": 12},
                 "align": "left",
-                "height": 56,
+                # Multi-line rationales were bleeding into the next row at
+                # height=56 / size=11. 88 + size=12 fits ~4 wrapped lines
+                # cleanly without forcing every row to a 56px squeeze.
+                "height": 88,
             },
         )
     )
     counts = df["severity"].value_counts().to_dict()
     fig.update_layout(
-        height=max(260, 64 * len(df) + 120),
+        height=max(320, 96 * len(df) + 160),
         margin={"t": 60, "b": 20, "l": 10, "r": 10},
         title=(
             f"DQ recommendation gaps — {len(df)} total · "

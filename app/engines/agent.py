@@ -68,10 +68,16 @@ specifics from memory; fetch them.
       _"walk me through the graph"_.
     - `impact_check` runs MetaSift's weighted impact analytics on top of
       lineage (direct / transitive counts, PII-weighted score, criticality
-      ranking). Use it for _"blast radius"_, _"impact"_, _"what breaks if
-      I change X"_, _"how critical is X"_, _"ripple effect"_.
+      ranking) for ONE table. Use it for _"blast radius of X"_, _"impact of
+      X"_, _"what breaks if I change X"_, _"how critical is X"_.
+    - `impact_catalog` is the catalog-wide top-N ranking — use it for
+      _"blast-radius top 10"_, _"top blast radius"_, _"most critical
+      tables"_, _"rank tables by impact"_, _"biggest downstream
+      footprint"_. Don't fall back to looping `impact_check` over
+      `list_tables` — `impact_catalog` does that in one call.
   If the user's question is about *criticality* or *impact*, you MUST use
-  `impact_check` — that's what gives them our weighted score.
+  `impact_check` (single table) or `impact_catalog` (top-N) — that's what
+  gives them our weighted score.
 - Writes stay local — MCP is read-only in MetaSift. For any change to
   OpenMetadata, use the stewardship tools so the user approves first.
 
@@ -279,6 +285,9 @@ Stew: [calls list_tables first if the full FQN isn't clear, THEN calls get_entit
 User: "what's the blast radius of orders?" / "impact score for customer_profiles" / "which tables are most critical?" / "what has the biggest downstream footprint?" / "what breaks if I change X?"
 Stew: [calls **impact_check** — NOT get_entity_lineage — with the 4-part FQN. If the FQN isn't clear, silently calls `list_tables` first without asking permission, then invokes `impact_check`. Reports direct + transitive counts, the PII-downstream number, and the weighted impact score. Notes the top-ranked catalog tables (campaign_attr + customer_profiles in this demo) highlight because their chains hit sensitive data. Never uses get_entity_lineage for impact/blast-radius questions — that tool only returns the raw graph]
 
+User: "blast-radius top 10" / "top blast radius" / "rank tables by impact" / "which tables would hurt most if changed?" / "show me the most critical tables in the catalog"
+Stew: [calls **impact_catalog** with the requested limit (default 10). ONE call — never loops impact_check over list_tables to fake a ranking. Reports the top 1-3 in plain English with a one-line verdict on what makes them risky (typically: long PII chains downstream)]
+
 User: "who owns what?" / "which team is doing best?" / "any orphan tables?" / "stewardship leaderboard" / "who's responsible for the sales schema?"
 Stew: [calls ownership_report — returns a per-team scorecard (tables owned, coverage %, PII tables, quality) plus an orphan list. Summarizes with a bias toward accountability: highlight the best-performing team, call out orphans as something someone should claim]
 
@@ -302,6 +311,9 @@ Stew: [calls **dq_risk_catalog**. Returns a ranked markdown table. Summarizes th
 
 User: "where does PII propagate?" / "PII governance" / "which tables inherit PII from upstream?" / "where does sensitive data reach?" / "show me the PII propagation graph"
 Stew: [calls **pii_propagation** (no args). Returns origins (tables with PII.Sensitive columns directly), tainted downstream (reachable via lineage), and propagation edge counts. Summarizes in plain English — lead with origins, then the downstream reach, then mention the 🛡️ Governance viz tab for the visual view. If the catalog has no PII tags, the tool returns a hint to run the PII scan first — relay that]
+
+User: "run a PII scan" / "scan for PII" / "classify PII columns" / "find PII columns" / "tag PII" / "do a PII pass"
+Stew: [calls **scan_pii** (no args). Runs the heuristic + optional LLM PII classifier across every column in the cache and writes findings into the review queue (no OM writes yet). Reports counts: sensitive / non-sensitive / gaps. Mentions the user can review and accept the suggestions in the 📋 Review queue. Don't refuse or redirect to the sidebar — the agent owns this scan too]
 
 Go. The catalog's waiting."""
 
@@ -346,7 +358,15 @@ def _load_mcp_tools() -> list:
 
 
 def _load_tools() -> list:
-    """Collect tools for the agent — local MetaSift tools plus any MCP tools."""
+    """Collect tools for the agent — local MetaSift tools plus any MCP tools.
+
+    Local tools are wrapped by `_wrap_for_safety` inside `get_tools()` so a
+    raised exception becomes a recoverable error string. MCP tools (from
+    ai_sdk) inherit BaseTool's `handle_tool_error=True` setting baked into
+    `MCPToolWrapper` itself, which gives the same guarantee — an OM 5xx or
+    `MCPToolExecutionError` lands as a `Tool '...' failed: ...` string the
+    agent can read and recover from. So we don't double-wrap MCP here.
+    """
     local_tools = get_tools()
     mcp_tools = _load_mcp_tools()
     tools = local_tools + mcp_tools

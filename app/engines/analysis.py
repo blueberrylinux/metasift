@@ -23,6 +23,36 @@ def documentation_coverage() -> pd.DataFrame:
     """)
 
 
+def service_coverage() -> pd.DataFrame:
+    """Per-service inventory with table counts derived from om_tables.
+
+    FQNs in om_tables are `service.database.schema.table`, so the first
+    dotted segment is the service name. Left-join keeps zero-table
+    services visible so the user can see connectors that are registered
+    but haven't been ingested yet.
+    """
+    try:
+        return duck.query("""
+            WITH table_counts AS (
+                SELECT split_part(fullyQualifiedName, '.', 1) AS service_name,
+                       COUNT(*) AS tables
+                FROM om_tables
+                GROUP BY service_name
+            )
+            SELECT
+                s.name AS service,
+                s.kind,
+                s.service_type AS type,
+                COALESCE(tc.tables, 0) AS tables
+            FROM om_services s
+            LEFT JOIN table_counts tc ON tc.service_name = s.name
+            ORDER BY tables DESC, s.kind, s.name
+        """)
+    except Exception as e:
+        logger.warning(f"service_coverage query failed: {e}")
+        return pd.DataFrame(columns=["service", "kind", "type", "tables"])
+
+
 def ownership_breakdown() -> pd.DataFrame:
     """Per-team stewardship scorecard.
 

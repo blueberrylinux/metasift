@@ -19,3 +19,30 @@ CLAUDE.local.md
 DEVLOG.md
 metasift.egg-info/
 *:Zone.Identifier
+
+# Port (port/fastapi-react branch)
+web/node_modules/
+web/dist/
+web/.vite/
+web/*.tsbuildinfo
+# `tsc -b` with the tsconfig.node.json project ref emits these alongside
+# vite.config.ts — build artifacts, not source.
+web/vite.config.js
+web/vite.config.d.ts
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
+# Port scaffold / planning docs — kept locally for reference, not tracked.
+# The canonical versions live in ../metasift+/.
+/Port Risk Mitigation.md
+/MetaSift App.html
+/MetaSift Port Scaffolding.html
+
+# Personal dev plans / future-work notes — not part of the project's public
+# surface. Keep the file in the working tree (so it's there when I want it),
+# just don't push it.
+/SANDBOX_DEPLOYMENT_PLAN.md
+/PRE_SUBMISSION_AUDIT.md
+/WEBSITE_UPDATE_PLAN.md

@@ -230,18 +230,14 @@ def force_reset_table(c: httpx.Client, schema: str, spec: dict) -> None:
 
     # Column tags — replace each column's tags array by index. Rely on OM
     # preserving column order across PUT, which it does for named columns.
-    target_tags_by_name = {
-        name: _column_tags(tag) for name, _dtype, tag in spec["columns"]
-    }
+    target_tags_by_name = {name: _column_tags(tag) for name, _dtype, tag in spec["columns"]}
     for idx, col in enumerate(current.get("columns") or []):
         name = col.get("name")
         target = target_tags_by_name.get(name, [])
         current_fqns = sorted(t.get("tagFQN", "") for t in (col.get("tags") or []))
         target_fqns = sorted(t.get("tagFQN", "") for t in target)
         if current_fqns != target_fqns:
-            patches.append(
-                {"op": "replace", "path": f"/columns/{idx}/tags", "value": target}
-            )
+            patches.append({"op": "replace", "path": f"/columns/{idx}/tags", "value": target})
 
     if not patches:
         return
@@ -347,6 +343,174 @@ TEAMS: list[dict] = [
 # owner — gives MetaSift's orphan-detection something real to flag.
 
 
+# ── DQ test cases + failing results ───────────────────────────────────────
+#
+# Each entry seeds one OpenMetadata test case + one test result so MetaSift's
+# DQ surfaces (failures viz, recommendations, risk ranking, agent tools) all
+# have real catalog state to read from. Mix of fix_types to cover every
+# branch in `cleaning.explain_dq_failure` / the action-chip dispatch in DQ.tsx.
+#
+# `column` is None for table-level tests. `parameter_values` shape mirrors
+# OpenMetadata's testDefinition contract — empty list for parameterless tests
+# like columnValuesToBeNotNull / columnValuesToBeUnique.
+
+DQ_TEST_CASES: list[dict] = [
+    {
+        # null_constraint — null_count fix_type
+        "table": "users.customer_profiles",
+        "column": "email",
+        "name": "email_not_null",
+        "definition": "columnValuesToBeNotNull",
+        "description": "Customer profiles must always have an email on file.",
+        "parameter_values": [],
+        "status": "Failed",
+        "result": "Found 47 NULL values out of 2,841 rows (1.65%) — expected 0.",
+    },
+    {
+        # null_constraint on a different column to give the action-chip
+        # disambiguation something to choose between
+        "table": "sales.refund_events",
+        "column": "refunded_at",
+        "name": "refunded_at_not_null",
+        "definition": "columnValuesToBeNotNull",
+        "description": "Every refund row must record when the refund happened.",
+        "parameter_values": [],
+        "status": "Failed",
+        "result": "Found 12 NULL refunded_at values out of 1,402 rows.",
+    },
+    {
+        # unique_constraint — duplicate_count fix_type
+        "table": "users.customer_profiles",
+        "column": "phone",
+        "name": "phone_unique",
+        "definition": "columnValuesToBeUnique",
+        "description": "Phone numbers should be unique per customer.",
+        "parameter_values": [],
+        "status": "Failed",
+        "result": "12 duplicate values across 28 rows — expected 0 duplicates.",
+    },
+    {
+        # range_check / out_of_range — fix_type bounds_check.
+        # Targets finance.invoices.amount because finance.payments doesn't
+        # have an amount column (it has payment_id/invoice_id/phone — see
+        # MESSY_SCHEMAS).
+        "table": "finance.invoices",
+        "column": "amount",
+        "name": "invoice_amount_strictly_positive",
+        "definition": "columnValuesToBeBetween",
+        "description": "Invoice amounts must be strictly positive.",
+        "parameter_values": [
+            {"name": "minValue", "value": "0.01"},
+            {"name": "maxValue", "value": "100000.00"},
+        ],
+        "status": "Failed",
+        "result": "8 rows with amount <= 0 (min observed: -47.50).",
+    },
+    {
+        # regex — schema_drift fix_type
+        "table": "marketing.email_sends",
+        "column": "email",
+        "name": "email_format_valid",
+        "definition": "columnValuesToMatchRegex",
+        "description": "Recipient emails must match a basic RFC-5322-ish regex.",
+        "parameter_values": [
+            {"name": "regex", "value": r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"}
+        ],
+        "status": "Failed",
+        "result": "143 rows have malformed email values (no @ or no TLD).",
+    },
+    {
+        # range, but PASSING — gives the dashboard a non-100%-failing mix and
+        # exercises the "passing test" path through analysis.dq_failures()
+        "table": "sales.orders",
+        "column": "total_amount",
+        "name": "order_total_in_expected_range",
+        "definition": "columnValuesToBeBetween",
+        "description": "Order totals fall within expected sane bounds.",
+        "parameter_values": [
+            {"name": "minValue", "value": "0.01"},
+            {"name": "maxValue", "value": "50000.00"},
+        ],
+        "status": "Success",
+        "result": "All 18,304 rows within bounds.",
+    },
+    {
+        # table-level — row count, gives table_check fix_type something to bite
+        "table": "marketing.campaign_attr",
+        "column": None,
+        "name": "campaign_attr_row_count_nonzero",
+        "definition": "tableRowCountToBeBetween",
+        "description": "Campaign attribution should never go fully empty mid-day.",
+        "parameter_values": [
+            {"name": "minValue", "value": "1"},
+            {"name": "maxValue", "value": "1000000"},
+        ],
+        "status": "Failed",
+        "result": "Found 0 rows — campaign attribution is empty.",
+    },
+]
+
+
+def seed_dq_test_cases(c: httpx.Client) -> None:
+    """Create test cases + write a single failing/passing result for each.
+
+    POST /v1/dataQuality/testCases is idempotent on `name` per entityLink —
+    a re-run gets 409, which we treat as "already there, fine, write a fresh
+    result on top". Test results are timestamped, so re-running the seed
+    pushes the failure date forward and the dashboards show the latest.
+    """
+    import time
+
+    logger.info(f"Seeding {len(DQ_TEST_CASES)} DQ test case(s)...")
+    now_ms = int(time.time() * 1000)
+    for spec in DQ_TEST_CASES:
+        schema, table = spec["table"].split(".", 1)
+        table_fqn = _table_fqn(schema, table)
+        column = spec["column"]
+        if column:
+            entity_link = f"<#E::table::{table_fqn}::columns::{column}>"
+        else:
+            entity_link = f"<#E::table::{table_fqn}>"
+
+        case_payload = {
+            "name": spec["name"],
+            "description": spec["description"],
+            "entityLink": entity_link,
+            "testDefinition": spec["definition"],
+            "parameterValues": spec["parameter_values"],
+        }
+        r = c.post("/v1/dataQuality/testCases", json=case_payload)
+        if r.status_code == 201:
+            case_fqn = r.json().get("fullyQualifiedName")
+            logger.info(f"  ✔ test case created: {spec['name']}")
+        elif r.status_code == 409:
+            # Already exists from a previous run — derive the FQN from the
+            # naming convention (testCase FQN = <table_fqn>.<column>?.<name>)
+            # rather than refetching, since OM's GET-by-name uses the same
+            # schema and we'd just round-trip the same string.
+            case_fqn = (
+                f"{table_fqn}.{column}.{spec['name']}" if column else f"{table_fqn}.{spec['name']}"
+            )
+            logger.info(f"  ↻ test case exists: {spec['name']}")
+        else:
+            logger.warning(f"  ✘ {spec['name']} → {r.status_code}: {r.text[:200]}")
+            continue
+
+        result_payload = {
+            "timestamp": now_ms,
+            "testCaseStatus": spec["status"],
+            "result": spec["result"],
+        }
+        r2 = c.post(
+            f"/v1/dataQuality/testCases/testCaseResults/{case_fqn}",
+            json=result_payload,
+        )
+        if r2.status_code in (200, 201):
+            logger.info(f"    ✔ result written: {spec['status']}")
+        else:
+            logger.warning(f"    ✘ result for {spec['name']} → {r2.status_code}: {r2.text[:200]}")
+
+
 def ensure_teams_and_ownership(c: httpx.Client) -> None:
     """Create each team (idempotent) then PATCH `owners` on the named tables.
 
@@ -403,6 +567,7 @@ def main() -> int:
                 force_reset_table(c, schema, spec)
         create_lineage_edges(c)
         ensure_teams_and_ownership(c)
+        seed_dq_test_cases(c)
     logger.success("Seeding complete.")
     logger.info("Open http://localhost:8585 → Explore → you'll see metasift_demo_db.")
     return 0

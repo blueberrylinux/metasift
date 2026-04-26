@@ -10,6 +10,47 @@ from loguru import logger
 
 from app.config import settings
 
+# Runtime overrides — populated by `app.api.routers.om` when the user saves
+# a new host / JWT through the Settings UI, and at startup from SQLite via
+# `app.api.store.all_runtime_config()`. These take priority over `.env` so
+# the user can rotate the OM JWT without editing `.env` + restarting the
+# API. None means "fall through to settings".
+_override_host: str | None = None
+_override_jwt: str | None = None
+
+
+def set_runtime_override(*, host: str | None, jwt: str | None) -> None:
+    """Replace the runtime override and drop every cached client so the next
+    call rebuilds with the new credentials."""
+    global _override_host, _override_jwt
+    _override_host = host or None
+    _override_jwt = jwt or None
+    reload_clients()
+
+
+def reload_clients() -> None:
+    """Drop every cached SDK / httpx client. Next call rebuilds with whatever
+    `_effective_*` resolves to (override → settings)."""
+    get_om_client.cache_clear()
+    get_http.cache_clear()
+    _health_client.cache_clear()
+
+
+def _effective_host() -> str:
+    return _override_host or settings.om_host
+
+
+def _effective_api() -> str:
+    if _override_host:
+        return f"{_override_host.rstrip('/')}/api"
+    return settings.om_api
+
+
+def _effective_token() -> str:
+    if _override_jwt:
+        return _override_jwt
+    return settings.require_om_token()
+
 
 @lru_cache(maxsize=1)
 def get_om_client():
@@ -26,9 +67,9 @@ def get_om_client():
     )
     from metadata.ingestion.ometa.ometa_api import OpenMetadata
 
-    token = settings.require_om_token()
+    token = _effective_token()
     conn = OpenMetadataConnection(
-        hostPort=settings.om_api,
+        hostPort=_effective_api(),
         authProvider=AuthProvider.openmetadata,
         securityConfig=OpenMetadataJWTClientConfig(jwtToken=token),
     )
@@ -38,18 +79,30 @@ def get_om_client():
 @lru_cache(maxsize=1)
 def get_http() -> httpx.Client:
     """Plain authenticated HTTP client for endpoints the SDK doesn't expose well."""
-    token = settings.require_om_token()
+    token = _effective_token()
     return httpx.Client(
-        base_url=settings.om_api,
+        base_url=_effective_api(),
         headers={"Authorization": f"Bearer {token}"},
         timeout=30.0,
     )
 
 
+@lru_cache(maxsize=1)
+def _health_client() -> httpx.Client:
+    """Dedicated short-timeout client for the /health probe. Separate from
+    `get_http()` so an auth-token problem (which requires a valid token)
+    doesn't break unauthenticated liveness checks, and so health calls
+    reuse a persistent connection instead of TLS-handshaking every time."""
+    return httpx.Client(base_url=_effective_host(), timeout=3.0)
+
+
 def health_check() -> bool:
-    """Quick ping — used on app startup."""
+    """Quick ping — used by /health and on startup. Reuses a persistent
+    httpx.Client so repeated polls don't re-establish TCP+TLS each call,
+    and caps timeout at 3s so a slow OM never blocks the probe thread
+    for long."""
     try:
-        r = httpx.get(f"{settings.om_host}/api/v1/system/version", timeout=5.0)
+        r = _health_client().get("/api/v1/system/version")
         return r.status_code == 200
     except Exception as e:
         logger.warning(f"OpenMetadata not reachable: {e}")

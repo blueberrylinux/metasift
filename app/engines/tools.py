@@ -81,6 +81,30 @@ def list_schemas() -> str:
 
 
 @tool
+def list_services() -> str:
+    """List every data source connected to OpenMetadata, grouped by kind.
+
+    Use when the user asks about data sources, connectors, services, or
+    _"what's wired into OpenMetadata"_. Covers database, dashboard,
+    messaging, and pipeline services. Returns a markdown table with the
+    service name, kind, connector type, and how many tables each
+    database service has actually ingested.
+    """
+    # Don't gate on `_has_data()` — that checks `om_tables`, so a catalog
+    # with services registered but zero ingested tables (e.g. a fresh
+    # connector post-crawl) would falsely show the refresh hint. The
+    # coverage query handles missing tables via its LEFT JOIN; an empty
+    # result means refresh genuinely hasn't run.
+    try:
+        df = analysis.service_coverage()
+    except Exception:
+        return _EMPTY_HINT
+    if df.empty:
+        return _EMPTY_HINT
+    return df.to_markdown(index=False)
+
+
+@tool
 def list_tables(schema_name: str = "") -> str:
     """List tables in the catalog, optionally filtered by schema name.
 
@@ -291,7 +315,8 @@ Accuracy and coverage get equal weight because wrong docs hurt as much as missin
    and next-step recommendations.
 
 4. **Interface** (`app/engines/agent.py`) — That's me, Stew. LangChain agent
-   wired to 11 tools over the other engines. Chat in natural language.""",
+   wired to 27 local tools + 3 read-only MCP tools over the other engines.
+   Chat in natural language.""",
     "architecture": """**Stack:**
 
 - **OpenMetadata 1.9.4** — Docker Compose stack (MySQL + Elasticsearch + server)
@@ -352,6 +377,7 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
     "capabilities": """**Here's what I can actually do for you:**
 
 **Discovery**
+- See which data sources (database / dashboard / messaging / pipeline services) are connected to OpenMetadata
 - See what databases and schemas exist in your catalog
 - List tables, optionally filtered to a specific schema
 
@@ -1082,6 +1108,49 @@ def impact_check(fqn: str) -> str:
 
 
 @tool
+def impact_catalog(limit: int = 10) -> str:
+    """Catalog-wide ranking of tables by blast radius / impact score.
+
+    ★ Use this for _"blast radius top 10"_, _"top blast radius"_, _"most
+      critical tables"_, _"biggest downstream footprint"_, _"rank tables
+      by impact"_, _"which tables would hurt most if changed?"_ ★
+
+    Per-table impact_check tells you a single table's blast radius. This
+    tool ranks the whole catalog so the user sees the top N at a glance.
+    Sorted by weighted impact score (direct + 0.5×transitive_only + 2×PII).
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = analysis.top_blast_radius(limit=int(limit) if limit else 10)
+    if df.empty:
+        return (
+            "No lineage data — every table looks like a leaf right now. "
+            "Click **🔄 Refresh metadata** to repopulate, or check that "
+            "lineage edges have been ingested into OpenMetadata."
+        )
+    # If the top scores are all 0, lineage is empty even though tables exist.
+    if (df["impact_score"] == 0).all():
+        return (
+            "All tables show impact score 0 — no downstream lineage edges in "
+            "the catalog. Ingest lineage in OpenMetadata to populate this view."
+        )
+    lines: list[str] = [
+        f"**Top {len(df)} blast-radius tables** — direct + transitive downstream, PII-amplified",
+        "",
+        "| Rank | Table | Direct | Transitive | PII downstream | Impact score |",
+        "|---|---|---|---|---|---|",
+    ]
+    for i, (_, r) in enumerate(df.iterrows(), start=1):
+        short = ".".join(r["fqn"].split(".")[-2:])
+        lines.append(
+            f"| {i} | `{short}` | {int(r['direct'])} | "
+            f"{int(r['transitive'])} | {int(r['pii_downstream'])} | "
+            f"**{r['impact_score']}** |"
+        )
+    return "\n".join(lines)
+
+
+@tool
 def auto_document_schema(schema_name: str) -> str:
     """Draft descriptions for EVERY undocumented table in a schema at once.
 
@@ -1289,9 +1358,13 @@ def apply_pii_tag(table_fqn: str, column_name: str, tag_fqn: str) -> str:
 def run_sql(query: str) -> str:
     """Run arbitrary read-only SQL against the DuckDB metadata store.
 
-    Available tables:
+    Available tables (all populated by `refresh_metadata`):
       - `om_tables` (fullyQualifiedName, description, columns, tags, owners, profile)
       - `om_columns` (table_fqn, name, dataType, description, tags)
+      - `om_lineage` (source_fqn, target_fqn)
+      - `om_test_cases` (id, name, table_fqn, column_name, test_definition_name,
+        status, result_message, result_timestamp, failed_rows_sample, source)
+      - `om_services` (id, name, fqn, kind, service_type, description)
 
     Use for ad-hoc questions not covered by the other tools. Read-only —
     do NOT use for INSERT/UPDATE/DELETE. Returns up to 50 rows as a markdown table.
@@ -1313,6 +1386,7 @@ def run_sql(query: str) -> str:
 # ── Registry ───────────────────────────────────────────────────────────────────
 
 ALL_TOOLS = [
+    list_services,
     list_schemas,
     list_tables,
     documentation_coverage,
@@ -1324,6 +1398,7 @@ ALL_TOOLS = [
     about_metasift,
     ownership_report,
     impact_check,
+    impact_catalog,
     pii_propagation,
     dq_impact,
     dq_risk_catalog,

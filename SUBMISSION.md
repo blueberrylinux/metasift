@@ -20,7 +20,7 @@ MetaSift directly addresses **six issues** from the hackathon board:
 
 | Issue | Title | How MetaSift covers it | Where to look |
 | --- | --- | --- | --- |
-| [#26608](https://github.com/open-metadata/OpenMetadata/issues/26608) | Conversational Data Catalog Chat App | **Stew** — full chat experience with 26 local tools + 3 allowlisted MCP tools, streamed responses, "Show your work" tool-trace expander per reply, natural-language routing to every MetaSift capability | `app/engines/agent.py`, `app/engines/tools.py` |
+| [#26608](https://github.com/open-metadata/OpenMetadata/issues/26608) | Conversational Data Catalog Chat App | **Stew** — full chat experience with 27 local tools + 3 allowlisted MCP tools (30 total), streamed responses over Server-Sent Events, "Show your work" tool-trace expander per reply, natural-language routing to every MetaSift capability | `app/engines/agent.py`, `app/engines/tools.py` |
 | [#26659](https://github.com/open-metadata/OpenMetadata/issues/26659) | Human-Readable Explanations for Failed DQ Checks | Ingest DQ test cases, LLM writes three fields per failure: **Summary** · **Likely cause** · **Suggested fix**. Cached in `dq_explanations`. Synthetic 7-row fixture provides a demo path when OM has no configured tests. | `app/engines/cleaning.py::explain_dq_failure`, `app/clients/duck.py::_fetch_test_cases`, `scripts/dq_fixtures.json` |
 | [#26660](https://github.com/open-metadata/OpenMetadata/issues/26660) | AI-Powered Data Quality Recommendations | `recommend_dq_tests(fqn)` — grounds the LLM in columns + tags + existing tests, proposes severity-ranked DQ tests that should exist but don't. Constrained to a 12-definition OM-test allowlist so outputs are always valid. Filters duplicates. Catalog-wide `run_dq_recommendations`. | `app/engines/stewardship.py::recommend_dq_tests`, `_DQ_TEST_CATALOG` |
 | [#26658](https://github.com/open-metadata/OpenMetadata/issues/26658) | Data Quality Checks Impact | `dq_impact(fqn)` — multiplicative risk score combining failing tests × downstream blast radius × PII amplifier. Zero when either side is zero (contained). `dq_risk_catalog` ranks the catalog. 🎯 DQ risk viz tab renders bars with a PII-amplified color ramp. | `app/engines/analysis.py::dq_impact`, `dq_risk_ranking` |
@@ -28,6 +28,45 @@ MetaSift directly addresses **six issues** from the hackathon board:
 | [#25146](https://github.com/open-metadata/OpenMetadata/issues/25146) | Lineage Governance Layer | **🛡️ Governance** viz tab — same DAG layout as the standard lineage view, recolored by PII status (🔴 origin · 🟠 tainted · ⚪ clean). Propagation edges drawn red, non-propagation faded gray. Single recursive CTE seeded at every origin computes the transitive taint. | `app/engines/analysis.py::pii_propagation`, `viz.py::governance_lineage_dag` |
 
 Beyond those six: MetaSift also ships the chat app and a full cleaning-engine suite that predates the DQ track (stale detection, quality scoring, tag-conflict finder, naming-drift clusters, PII heuristics, composite score, blast radius, stewardship leaderboard, orphan detection, review queue, executive report).
+
+## v0.1 → v0.2 — porting from Streamlit to FastAPI + React
+
+MetaSift shipped twice during the hackathon. **v0.1** (April 21, tagged
+[`v0.1-streamlit`](https://github.com/blueberrylinux/metasift/releases/tag/v0.1-streamlit))
+was a Streamlit app: dashboard left, Stew chat right, all four engines wired
+end-to-end. It worked, but Streamlit's whole-page rerun model was a poor fit
+for streaming chat, multi-step scans, and the kind of dense viz tabs the
+project had grown into.
+
+**v0.2** (April 26 — this submission) is a full port to FastAPI + React 19 +
+TanStack Query, completed in 5 calendar days across 70+ commits on
+`port/fastapi-react` (April 21 v0.1 → April 26 v0.2).
+
+The point worth flagging: **the engines didn't change.** All four — Analysis,
+Stewardship, Cleaning, Interface — and the LangChain agent with its 27 local
+tools + 3 MCP tools moved across untouched. What got rewritten was the UI
+surface: the Streamlit dashboard became React components driven by a
+typed FastAPI port (`app/api/`), Server-Sent Events replaced Streamlit
+session state for chat streaming, a SQLite store replaced `st.session_state`
+for conversation history + review-queue durability, and the chat router got
+a watchdog timeout, an abortable worker thread, and a sanitized error path
+that doesn't leak server internals to the client.
+
+Two things this proves:
+
+1. **Engine decoupling held.** The same `app.engines.*` modules served two
+   completely different presentation layers. Anyone wanting to bolt MetaSift
+   onto Slack, an MCP client, or a notebook can do it without touching
+   the analytical core.
+2. **Iteration matters more than first-shot polish.** The Streamlit version
+   was already "shipped" by hackathon-submission standards; rebuilding
+   anyway — on day 5 of 7 — was the right call because the demo this
+   project deserves needed a UI that didn't blink the whole page on every
+   message.
+
+To audit the journey: `git checkout v0.1-streamlit` runs the Streamlit
+version (`make stack-up && make seed && make run`), `main`/`port/fastapi-react`
+runs the React app (`make api && cd web && npm run dev`).
 
 ## What's shipped (feature inventory)
 
@@ -120,7 +159,8 @@ Beyond those six: MetaSift also ships the chat app and a full cleaning-engine su
 - LangChain 1.x with `create_agent` / LangGraph
 - OpenRouter by default (any OpenAI-compatible endpoint works)
 - DuckDB for in-process analytical SQL
-- Streamlit + Plotly for the UI
+- **v0.2:** FastAPI + Server-Sent Events for the API; React 19 + Vite + TanStack Query + Tailwind for the SPA; SQLite for conversations / review queue / scan-run history; Plotly.js for charts
+- **v0.1 (tagged `v0.1-streamlit`):** Streamlit + Plotly for the UI
 - `thefuzz` for fuzzy naming clusters
 - `httpx` for REST + the dynamic OpenRouter catalog fetch
 
