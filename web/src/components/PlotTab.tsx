@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
 
 import { ApiError, getVizFigure } from '../lib/api';
+import { DQFailuresVizTable, DQGapsVizTable } from './DQVizTable';
 
 // Deferred import so plotly only ships when the user hits /viz. vite's
 // manualChunks config isolates the plotly chunk; lazy loading kicks in the
@@ -35,7 +36,35 @@ const Plot = lazy(async () => {
   return { default: createPlotlyComponent(Plotly) };
 });
 
+// Dispatcher: dq-failures and dq-gaps render as native HTML tables instead
+// of Plotly tables. Plotly's uniform cell height made multi-line LLM
+// rationales overflow into adjacent rows. The HTML table's per-row sizing
+// fixes that and lets the two views share consistent typography.
+//
+// Split out so PlotlyTab can call useQuery unconditionally — keeps React's
+// rules-of-hooks linter happy without depending on the parent's keying for
+// safety.
 export function PlotTab({ slug, caption }: { slug: string; caption: string }) {
+  if (slug === 'dq-failures') {
+    return (
+      <div>
+        <p className="text-ink-dim text-xs italic mb-3">{caption}</p>
+        <DQFailuresVizTable />
+      </div>
+    );
+  }
+  if (slug === 'dq-gaps') {
+    return (
+      <div>
+        <p className="text-ink-dim text-xs italic mb-3">{caption}</p>
+        <DQGapsVizTable />
+      </div>
+    );
+  }
+  return <PlotlyTab slug={slug} caption={caption} />;
+}
+
+function PlotlyTab({ slug, caption }: { slug: string; caption: string }) {
   const q = useQuery({
     queryKey: ['viz', slug],
     queryFn: () => getVizFigure(slug),
