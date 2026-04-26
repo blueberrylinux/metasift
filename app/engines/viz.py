@@ -78,7 +78,7 @@ def composite_gauge() -> go.Figure | None:
             title={"text": "Composite Score<br><sub>target: 80%</sub>"},
         )
     )
-    fig.update_layout(height=380, margin={"t": 50, "b": 20, "l": 20, "r": 20})
+    fig.update_layout(height=320, margin={"t": 50, "b": 20, "l": 20, "r": 20})
     return fig
 
 
@@ -185,7 +185,7 @@ def lineage_dag() -> go.Figure | None:
 
     fig = go.Figure(data=[edge_trace, node_trace])
     fig.update_layout(
-        height=520,
+        height=440,
         margin={"t": 40, "b": 20, "l": 20, "r": 20},
         xaxis={"visible": False},
         yaxis={"visible": False},
@@ -367,7 +367,7 @@ def governance_lineage_dag() -> go.Figure | None:
 
     fig = go.Figure(data=[other_trace, prop_trace, node_trace])
     fig.update_layout(
-        height=540,
+        height=460,
         margin={"t": 60, "b": 40, "l": 20, "r": 20},
         xaxis={"visible": False},
         yaxis={"visible": False},
@@ -500,7 +500,7 @@ def catalog_treemap() -> go.Figure | None:
         )
     )
     fig.update_layout(
-        height=520,
+        height=460,
         margin={"t": 30, "b": 10, "l": 10, "r": 10},
         title="Catalog map — tiles sized by column count, colored by PII.Sensitive share",
     )
@@ -621,20 +621,38 @@ def stewardship_leaderboard() -> go.Figure | None:
         xaxis="x2",
     )
 
+    # Orphan callout lives on its own row above the chart instead of being
+    # appended to the title — when the title wrapped, it collided with the
+    # top-axis "Coverage %" label below it.
     orphan_note = (
-        f" · {len(orphans_df)} orphan table(s) — see chat for `ownership_report`"
+        f"{len(orphans_df)} orphan table(s) — ask Stew for ownership_report"
         if not orphans_df.empty
-        else " · no orphans 🎉"
+        else "no orphans"
     )
     fig.update_layout(
         height=max(320, 70 * len(df) + 80),
-        title=f"Stewardship leaderboard — tables owned vs coverage{orphan_note}",
+        title={"text": "Stewardship leaderboard — tables owned vs coverage", "y": 0.97},
         barmode="group",
-        margin={"t": 60, "b": 40, "l": 140, "r": 80},
+        # Wider top margin so the title, orphan-note annotation, and the
+        # secondary x-axis title each get their own horizontal band.
+        margin={"t": 110, "b": 40, "l": 140, "r": 80},
         xaxis={"title": "Tables owned", "side": "bottom"},
         xaxis2={"title": "Coverage %", "overlaying": "x", "side": "top", "range": [0, 110]},
         yaxis={"autorange": "reversed"},
         legend={"orientation": "h", "y": -0.18, "x": 0.5, "xanchor": "center"},
+        annotations=[
+            {
+                "text": orphan_note,
+                "x": 0,
+                "xref": "paper",
+                "y": 1.06,
+                "yref": "paper",
+                "xanchor": "left",
+                "yanchor": "bottom",
+                "showarrow": False,
+                "font": {"size": 11, "color": "rgba(148,163,184,0.85)"},
+            }
+        ],
     )
     return fig
 
