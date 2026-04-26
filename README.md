@@ -368,7 +368,7 @@ MetaSift only sends structural metadata to external LLMs — column names, data 
 - DQ test cases as a 5th composite-score dimension
 - Slack / Jira integrations (webhook to notify stewards + file tickets) via the existing `fix_type` classifier
 - Contribute MetaSift's local tools (e.g. `impact_check`, `pii_propagation`, `dq_failures_summary`) back to OpenMetadata's MCP server
-- ~~FastAPI + React port — engines stay, UI gets rebuilt~~ — **shipped in v0.2** (April 26, 2026), see `port/fastapi-react` branch and the v0.1→v0.2 section in [SUBMISSION.md](SUBMISSION.md)
+- ~~FastAPI + React port — engines stay, UI gets rebuilt~~ — **shipped in v0.2** (April 26, 2026), now on `main`. The original Streamlit demo is preserved at the [`v0.1-streamlit`](https://github.com/blueberrylinux/metasift/releases/tag/v0.1-streamlit) tag; see the v0.1 → v0.2 section in [SUBMISSION.md](SUBMISSION.md) for the port story.
 - Custom agent workflows (no-code builder)
 - Plugin system for industry-specific analyzers
 
