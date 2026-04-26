@@ -22,9 +22,9 @@ MetaSift sits on top of OpenMetadata and adds four integrated engines plus a ric
 
 **Stewardship** — Writes the fixes back. Auto-documents undocumented tables (one at a time or a whole schema at once via NL), applies PII tags, recommends DQ tests that should exist but don't, and manages ownership. Every change flows through a **review queue** with Accept / Edit / Reject — no silent writes.
 
-**Stew** — The AI wizard. LangChain agent with **26 local tools** plus 3 allowlisted MCP tools for catalog search and lineage. Every reply carries a "Show your work" expander with the tool calls and raw results. The agent can't write directly — writes always go through the review queue.
+**Stew** — The AI wizard. LangChain agent with **27 local tools** plus 3 allowlisted MCP tools for catalog search and lineage. Every reply carries a "Show your work" expander with the tool calls and raw results. The agent can't write directly — writes always go through the review queue.
 
-On top of that: a **10-tab interactive visualization panel** (Score gauge, Lineage, Governance, Blast radius, Stewardship, Catalog map, Tag conflicts, Quality, DQ failures, DQ gaps, DQ risk), a downloadable **executive markdown report**, and an **LLM setup** surface that lets anyone bring their own OpenAI-compatible key (OpenRouter, OpenAI, Gemini, Groq, Ollama, or custom) with per-task model routing for power users.
+On top of that: a **11-tab interactive visualization panel** (Score gauge, Lineage, Governance, Blast radius, Stewardship, Catalog map, Tag conflicts, Quality, DQ failures, DQ gaps, DQ risk), a downloadable **executive markdown report**, and an **LLM setup** surface that lets anyone bring their own OpenAI-compatible key (OpenRouter, OpenAI, Gemini, Groq, Ollama, or custom) with per-task model routing for power users.
 
 ## Hackathon issues addressed
 
@@ -32,7 +32,7 @@ MetaSift directly addresses six issues from the WeMakeDevs × OpenMetadata "Back
 
 | Issue | Title | How MetaSift covers it |
 | --- | --- | --- |
-| [#26608](https://github.com/open-metadata/OpenMetadata/issues/26608) | Conversational Data Catalog Chat App | **Stew** — full chat experience with 26 local tools, MCP-backed catalog search/lineage, "Show your work" traces |
+| [#26608](https://github.com/open-metadata/OpenMetadata/issues/26608) | Conversational Data Catalog Chat App | **Stew** — full chat experience with 27 local tools, MCP-backed catalog search/lineage, "Show your work" traces |
 | [#26659](https://github.com/open-metadata/OpenMetadata/issues/26659) | Human-Readable Explanations for Failed DQ Checks | Ingests `om_test_cases`, LLM writes one-sentence summary + likely_cause + suggested_fix per failure, cached in `dq_explanations` |
 | [#26660](https://github.com/open-metadata/OpenMetadata/issues/26660) | AI-Powered Data Quality Recommendations | `recommend_dq_tests(fqn)` grounds the LLM in columns + tags + existing tests and proposes severity-ranked DQ tests that should exist but don't |
 | [#26658](https://github.com/open-metadata/OpenMetadata/issues/26658) | Data Quality Checks Impact | `dq_impact(fqn)` joins failing tests × lineage × PII into a risk score; `dq_risk_catalog` ranks where to fix first |
@@ -80,9 +80,9 @@ MetaSift directly addresses six issues from the WeMakeDevs × OpenMetadata "Back
 
 ### Interactive exploration
 
-- **Stew** (AI wizard) — Natural-language chat over all of the above; 26 local tools + 3 MCP tools
+- **Stew** (AI wizard) — Natural-language chat over all of the above; 27 local tools + 3 MCP tools
 - **"Show your work"** — Every AI response carries a collapsible expander with the tools called + results
-- **10-tab visualization panel** — Score gauge · Lineage · Governance · Blast radius · Stewardship · Catalog map · Tag conflicts · Quality · DQ failures · DQ gaps · DQ risk
+- **11-tab visualization panel** — Score gauge · Lineage · Governance · Blast radius · Stewardship · Catalog map · Tag conflicts · Quality · DQ failures · DQ gaps · DQ risk
 - **Executive report export** — Downloadable markdown summary (composite score, stale descriptions, tag conflicts, PII gaps, naming drift)
 
 ### Bring-your-own LLM
@@ -137,17 +137,18 @@ These capabilities don't exist in OpenMetadata, Collate, or any other catalog to
 ```mermaid
 graph TB
     subgraph Frontend
-        UI[Streamlit UI]
+        UI[React 19 + Vite SPA · v0.2]
+        UIv1[Streamlit UI · v0.1, tagged v0.1-streamlit]
         Stew[Stew AI Wizard]
-        Viz[10-tab Visualizations]
+        Viz[11-tab Visualizations]
         RQ[Review Queue]
-        Rep[Exec Report]
+        Rep[Exec Report · markdown + PDF]
         LLMSetup[LLM Setup Modal]
         Guide[Welcome / Guide]
     end
 
     subgraph Agent Layer
-        Agent[LangChain Agent · 26 tools + 3 MCP]
+        Agent[LangChain Agent · 27 tools + 3 MCP]
         MR[Per-task Model Router]
     end
 
@@ -230,7 +231,7 @@ Explicitly **excluded**: `patch_entity` (would bypass the review queue) and `cre
 
 The SDK is pinned in `pyproject.toml` at the server version (1.9.4) to keep pydantic + schema compatibility guaranteed on write-backs.
 
-**Agent tool registry:** 26 local MetaSift tools + 3 allowlisted MCP tools = **29 tools** available to Stew per turn.
+**Agent tool registry:** 27 local MetaSift tools + 3 allowlisted MCP tools = **30 tools** available to Stew per turn.
 
 ## Composite quality score
 
@@ -250,8 +251,9 @@ MetaSift's headline metric — weighted combination:
 | MCP bridge | `data-ai-sdk` (import `ai_sdk`) | Converts OM's MCP tools into LangChain `BaseTool` instances |
 | LLM | Any OpenAI-compatible endpoint | Default: OpenRouter with Llama 3.3 70B (5 tasks) + GPT-4o-mini (tool-calling, avoids Llama's introspection loops). User can swap to OpenAI, Gemini, Groq, Ollama, or a custom endpoint via the in-app LLM setup. |
 | Analytics | DuckDB (in-memory) | Zero-config SQL over the metadata cache; recursive CTEs for lineage |
-| Frontend | Streamlit | Chat pane, review queue panel, visualizations panel — all with session state |
-| Visualization | Plotly | Interactive charts in Streamlit |
+| Frontend (v0.2) | React 19 · Vite · TanStack Query · Tailwind | SPA with multi-conversation chat, ⌘K palette, live SSE streaming, Print→PDF reports |
+| Frontend (v0.1) | Streamlit | Original submission demo, preserved at tag `v0.1-streamlit` for iteration history |
+| Visualization | Plotly · Plotly.js | Interactive charts shared by both frontends |
 | Fuzzy matching | thefuzz | Naming inconsistency detection |
 | Deployment | Docker Compose | One-command setup |
 
@@ -286,8 +288,13 @@ cp .env.example .env
 # 4. Seed the demo catalog
 make seed
 
-# 5. Launch the app
-make run
+# 5a. Launch the v0.2 app (FastAPI + React — current)
+make api                      # FastAPI on :8000
+cd web && npm ci && npm run dev   # Vite dev server on :5173
+# → open http://localhost:5173
+
+# 5b. (Optional) Launch v0.1 Streamlit instead — preserved for the port story
+git checkout v0.1-streamlit && make run
 # → open http://localhost:8501
 ```
 
@@ -305,7 +312,8 @@ Once the app opens:
 ```text
 metasift/
 ├── app/
-│   ├── main.py              # Streamlit entry point (chat, review queue, viz panel)
+│   ├── main.py              # Streamlit entry point (v0.1 — preserved for the port story)
+│   ├── api/                 # FastAPI port (v0.2 — chat/scans/review/viz/report routers + SQLite store)
 │   ├── config.py            # Settings from .env
 │   ├── clients/
 │   │   ├── llm.py           # LLM client (OpenRouter, per-task model routing)
@@ -315,9 +323,9 @@ metasift/
 │       ├── analysis.py      # Catalog SQL analytics · blast radius · PII propagation · DQ risk
 │       ├── stewardship.py   # Auto-doc · bulk per-schema · PII tagging · DQ recommendations · write-back
 │       ├── cleaning.py      # Stale detection · quality scoring · heuristic PII · DQ explanations
-│       ├── tools.py         # LangChain @tool wrappers over the engines (26 tools)
+│       ├── tools.py         # LangChain @tool wrappers over the engines (27 tools)
 │       ├── report.py        # Markdown executive report generator
-│       ├── viz.py           # Plotly figure builders for the 10-tab viz panel
+│       ├── viz.py           # Plotly figure builders for the 11-tab viz panel
 │       └── agent.py         # LangChain agent over local + MCP tools
 ├── scripts/
 │   ├── seed_messy_catalog.py  # Populate OM with sample catalog data
@@ -338,7 +346,9 @@ make stack-up      # start OpenMetadata
 make stack-down    # stop + wipe volumes
 make stack-logs    # tail server logs
 make seed          # populate demo catalog
-make run           # launch Streamlit
+make api           # launch FastAPI (v0.2)            — http://localhost:8000
+make run           # launch Streamlit (v0.1 only)     — http://localhost:8501
+make reset-all     # wipe + reseed (sqlite + duck + OM volumes)
 make lint          # ruff check + format
 make test          # pytest
 ```
@@ -356,7 +366,7 @@ MetaSift only sends structural metadata to external LLMs — column names, data 
 - DQ test cases as a 5th composite-score dimension
 - Slack / Jira integrations (webhook to notify stewards + file tickets) via the existing `fix_type` classifier
 - Contribute MetaSift's local tools (e.g. `impact_check`, `pii_propagation`, `dq_failures_summary`) back to OpenMetadata's MCP server
-- FastAPI + React port (specs in the [`metasift+/`](../metasift+/) reference folder) — engines stay, UI gets rebuilt
+- ~~FastAPI + React port — engines stay, UI gets rebuilt~~ — **shipped in v0.2** (April 26, 2026), see `port/fastapi-react` branch and the v0.1→v0.2 section in [SUBMISSION.md](SUBMISSION.md)
 - Custom agent workflows (no-code builder)
 - Plugin system for industry-specific analyzers
 
