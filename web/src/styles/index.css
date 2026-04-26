@@ -284,45 +284,69 @@ a:focus-visible {
     height: auto;
   }
 
-  /* Hide everything outside the report content. visibility:hidden (rather
-     than display:none) preserves the parent's layout box so absolute
-     positioning of `.print-target` below stays predictable. */
-  body * {
-    visibility: hidden;
+  /* Hide chrome via display:none so it doesn't reserve layout space. The
+     visibility:hidden + position:absolute trick used previously caused the
+     dark fill to drift on subsequent pages — Chrome's print engine doesn't
+     reliably extend an absolutely-positioned element across page breaks.
+     Using display:none + natural document flow lets the print-target take
+     up its normal block height across all pages.
+
+     The chrome elements: AppLayout's outermost wrapper has h-14 TopBar +
+     a flex(Sidebar, main) row. Hide them by hiding everything except the
+     <main> ancestor chain of the print target. */
+  body > div > div.relative > div.h-14, /* TopBar */
+  body > div > div.relative > div.flex > aside,
+  body > div > div.relative > div.flex > [class*='w-[280px]'] /* Sidebar */ {
+    display: none !important;
   }
-  .print-target,
-  .print-target * {
-    visibility: visible;
+  /* Strip the absolute grid-bg overlay (covers the page in a faint grid
+     pattern that prints as awkward dotted noise). */
+  body > div > div.absolute,
+  body > div.absolute,
+  .grid-bg,
+  .hero-glow {
+    display: none !important;
   }
 
-  /* Pin the report to the top-left of the page so the (now-hidden)
-     sidebar / topbar offsets don't push it inward. */
+  /* Layout: print-target fills the page width naturally (no absolute
+     positioning, no max-width caps). Padding inside provides the
+     page-margin equivalent. */
   .print-target {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    max-width: 100%;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0.75in !important;
+    margin: 0 !important;
+    background: #020617 !important;
+    box-sizing: border-box;
+  }
+  /* main element wrapping the print-target also resets so the dark fill
+     reaches the page edges instead of being capped by main's padding. */
+  main {
     padding: 0 !important;
-    margin: 0;
+    background: #020617 !important;
   }
 
   /* Force solid (non-alpha) backgrounds across the report. ReportMarkdown
      uses `bg-ink-panel/30` on the wrapper and `bg-ink-panel/60` on thead —
      alpha layers that Chrome's print engine doesn't always alpha-composite
      consistently across page breaks (some pages render the alpha layer,
-     some don't, producing the mixed dark/light pages seen at first). With
-     solid fills the engine has nothing to blend; every page paints the
-     same color. The colors below match the on-screen alpha-blended result
-     so the printed PDF visually matches the screen.
+     some don't). With solid fills the engine has nothing to blend; every
+     page paints the same color.
+
+     The article wrapper also gets its rounded-xl border + padding stripped
+     so the dark fill reaches the page edges instead of being framed by
+     a white border on every page. Without this, Chrome paints WHITE in
+     the rounded corners and outside the article's border on each page.
 
      Hex values:
        #020617 = body bg / slate-950
-       #0d1726 = approximate of bg-ink-panel/30 on body (panel + body @ 30/70)
-       #131f33 = approximate of bg-ink-panel/60 on body (panel + body @ 60/40) */
+       #0d1726 = approximate of bg-ink-panel/30 on body
+       #131f33 = approximate of bg-ink-panel/60 on body */
   .print-target-content article {
-    background: #0d1726 !important;
-    border-color: #1e293b !important;
+    background: #020617 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
   }
   .print-target-content thead,
   .print-target-content thead tr,
@@ -362,18 +386,11 @@ a:focus-visible {
     word-break: break-word;
   }
 
-  /* Page setup — letter with no engine margins; we let the body's own
-     padding control whitespace so the dark canvas reaches the page edges
-     instead of being framed by a white border. */
+  /* Page setup — letter with no engine margins; the print-target's own
+     padding (set above) controls whitespace so the dark canvas reaches the
+     page edges instead of being framed by the printer's default margin. */
   @page {
     size: letter;
     margin: 0;
-  }
-
-  /* Compensate for the @page margin: 0 above by giving the report a
-     comfortable inner padding on every printed page. */
-  .print-target {
-    padding: 0.75in !important;
-    box-sizing: border-box;
   }
 }
