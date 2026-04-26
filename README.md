@@ -41,7 +41,53 @@ MetaSift directly addresses six issues from the WeMakeDevs × OpenMetadata "Back
 
 ## Demo
 
-[Watch the 2-minute demo on YouTube](https://youtu.be/-8sh1UNwvKI)
+[Watch the demo on YouTube](https://youtu.be/-8sh1UNwvKI)
+
+## Screenshots
+
+### Meet Stew — the AI wizard
+
+![Meet Stew landing](screenshots/01-meet-stew.png)
+*Composite-score health on the left, one-click prompts for every engine on the right. 30 tools (27 local + 3 MCP) wired to a LangChain agent.*
+
+![Stew explains the composite score](screenshots/02-stew-composite-score.png)
+*Every reply ships with a "Show your work" tool-call trace.*
+
+![Stew finds tag conflicts](screenshots/03-stew-tag-conflicts.png)
+*Natural-language chat over the cleaning engine — the same column tagged differently across schemas, surfaced as a table.*
+
+### Catalog quality at a glance
+
+![Composite score gauge](screenshots/04-score-gauge.png)
+*Headline metric — a weighted blend of coverage, accuracy, consistency, and description quality.*
+
+![Description quality scoring](screenshots/05-description-quality.png)
+*Per-table 1-5 scores from the LLM. Hover for the rationale.*
+
+![Catalog map — PII share](screenshots/06-catalog-map-pii.png)
+*Treemap colored by `PII.Sensitive` share — at-a-glance map of where sensitive columns concentrate.*
+
+### Data quality + lineage governance
+
+![DQ failures with fix-type chips](screenshots/07-dq-failures.png)
+*Failing tests, plain-English explanations, classified fix types — issues #26659 + #26661.*
+
+![DQ test recommendations](screenshots/08-dq-recommendations.png)
+*Catalog-wide recommended tests, severity-ranked — issue #26660.*
+
+![DQ risk ranking](screenshots/09-dq-risk.png)
+*Failed tests × downstream blast × PII amplifier — issue #26658.*
+
+![PII lineage governance](screenshots/10-pii-propagation.png)
+*Lineage DAG recolored by PII propagation — origin (red) / tainted (orange) / clean (gray) — issue #25146.*
+
+### Human-gated write-back
+
+![Review queue](screenshots/11-review-queue.png)
+*Accept / Edit / Reject every AI suggestion. REST PATCH only fires on approval.*
+
+![Executive report](screenshots/12-executive-report.png)
+*Stakeholder-ready markdown summary with composite score, orphans, blast radius, and stale descriptions. One-click download or Print/Save as PDF.*
 
 ## Features
 
