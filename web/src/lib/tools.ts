@@ -85,6 +85,12 @@ export const STEW_TOOLS: StewTool[] = [
     prompt: "What's the blast radius of {fullyQualifiedName}?",
   },
   {
+    name: 'impact_catalog',
+    category: 'Analysis',
+    description: 'Catalog-wide top-N tables ranked by blast radius / impact score.',
+    prompt: 'Show me the top 10 tables by blast radius.',
+  },
+  {
     name: 'pii_propagation',
     category: 'Analysis',
     description: 'Where does PII reach via lineage — origins, tainted downstream, edges.',
