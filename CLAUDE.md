@@ -14,7 +14,7 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 
 3. **Cleaning engine** (`app/engines/cleaning.py`) — The differentiator. Detects stale descriptions, tag conflicts across schemas, scores description quality 1-5, finds inconsistent naming via fuzzy matching. Mix of DuckDB SQL and LLM calls.
 
-4. **Interface layer** (`app/engines/agent.py`) — LangChain agent wired to MCP tools + custom REST tools. "Stew" is the AI wizard persona. Users interact via natural language chat in Streamlit.
+4. **Interface layer** (`app/engines/agent.py`) — LangChain agent wired to MCP tools + custom REST tools. "Stew" is the AI wizard persona. v0.2 ships a React/Vite SPA over a FastAPI port (`app/api/`); v0.1 (preserved at tag `v0.1-streamlit`) was a Streamlit app — both share the engines unchanged.
 
 ## Tech Stack
 
@@ -26,13 +26,15 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 - LangChain for agent orchestration
 - OpenRouter as the sole LLM provider (free tier) — default model: `meta-llama/llama-3.3-70b-instruct:free`
 - DuckDB for in-process analytical SQL on metadata
-- Streamlit for UI (dashboard left, chat right)
-- Plotly for charts via st.plotly_chart()
+- v0.2: React 19 + Vite + TanStack Query + Tailwind for the SPA; FastAPI + sse-starlette for the API; SQLite for conversations / review queue / scan-run history; Plotly.js for charts
+- v0.1 (preserved): Streamlit + Plotly via `st.plotly_chart()`
 - thefuzz for Levenshtein-based naming inconsistency detection
 
 ## Key Files
 
-- `app/main.py` — Streamlit entry point, dashboard + chat layout
+- `app/main.py` — Streamlit entry point (v0.1, preserved at tag `v0.1-streamlit`)
+- `app/api/` — FastAPI port (v0.2): routers for chat / scans / review / viz / report / analysis / dq / llm / om, SQLite store, SSE adapters
+- `web/` — React 19 + Vite SPA (v0.2): screens/, components/, lib/api.ts
 - `app/config.py` — Settings from .env via python-dotenv
 - `app/clients/llm.py` — LLM router, picks model per task type (toolcall, description, classification, stale, scoring, reasoning)
 - `app/clients/openmetadata.py` — SDK wrapper + REST client + health check
@@ -43,7 +45,7 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 - `app/engines/agent.py` — build_agent() with LangChain AgentExecutor
 - `scripts/seed_messy_catalog.py` — Populates OpenMetadata with sample catalog data for testing
 - `docker-compose.yml` — MySQL + Elasticsearch + migrate + OpenMetadata server
-- `Makefile` — make install, stack-up, stack-down, seed, run, lint, test
+- `Makefile` — make install, stack-up, stack-down, seed, api (v0.2), run (v0.1 Streamlit), reset-all, lint, test
 
 ## Composite Score Formula
 
@@ -72,7 +74,9 @@ make stack-up     # start OpenMetadata Docker stack
 make stack-down   # stop + wipe volumes
 make stack-logs   # tail server logs
 make seed         # populate demo catalog
-make run          # launch Streamlit app
+make api          # launch FastAPI (v0.2) on :8000; pair with `cd web && npm run dev` on :5173
+make run          # launch Streamlit (v0.1) on :8501 — only meaningful at tag v0.1-streamlit
+make reset-all    # wipe + reseed (sqlite + duck + OM volumes)
 make lint         # ruff check + format
 make test         # pytest
 ```
@@ -88,6 +92,7 @@ make test         # pytest
 - Import is `ai_sdk` not `data_ai_sdk` despite pip package name `data-ai-sdk`
 - openmetadata-ingestion version MUST match server version
 - pydantic pinned to <2.12 due to openmetadata-ingestion compatibility
-- DuckDB store needs refresh_all() called before any queries work
-- Streamlit uses st.session_state for conversation history and review queues
+- DuckDB store needs refresh_all() called before any queries work — v0.2 scan endpoints now check this and return typed `no_metadata_loaded` (was a CatalogException crash before audit Part 4 / commit c1bca64)
+- v0.2 persists conversations, review queue, and scan_runs in SQLite (`app.api.store`); v0.1 used `st.session_state` (lost on refresh)
 - REST API PATCH for descriptions uses JSON Merge Patch format
+- Tags `v0.1-streamlit` and `v0.2-rc1` are rollback checkpoints — `git checkout` either to inspect that state
