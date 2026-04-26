@@ -275,13 +275,14 @@ a:focus-visible {
 
   /* Keep the dark navy page background. Match the on-screen body color so
      margins around the report read as one continuous canvas, not a
-     white-bordered card on a white page. */
+     white-bordered card on a white page.
+     Don't set height:auto — that makes html shorter than the last page
+     when content ends partway through, leaving white below the content. */
   html,
   body,
   #root {
     background: #020617 !important;
     color: #e2e8f0;
-    height: auto;
   }
 
   /* Hide chrome via display:none so it doesn't reserve layout space. The
@@ -317,11 +318,21 @@ a:focus-visible {
   }
 
   /* Layout: print-target fills the page width naturally (no absolute
-     positioning, no max-width caps). 0.75in inner padding replaces the
-     @page margin which Chrome's PDF print is inconsistent about. */
+     positioning, no max-width caps).
+
+     Report.tsx applies `flex-1 px-6 py-6 max-w-4xl print-target` to this
+     div. In print we need to override:
+       - `flex-1` (would let parent flex constrain it) → flex: none
+       - `max-w-4xl` (caps width at 56rem) → max-width: 100%
+       - `px-6 py-6` (extra padding outside the dark canvas) → 0
+     Then re-apply 0.75in inner padding so content breathes inside the
+     page, replacing the @page margin which Chrome's PDF print is
+     inconsistent about honoring. */
   .print-target {
+    display: block !important;
+    flex: none !important;
     width: 100% !important;
-    max-width: none !important;
+    max-width: 100% !important;
     padding: 0.75in !important;
     margin: 0 !important;
     background: #020617 !important;
