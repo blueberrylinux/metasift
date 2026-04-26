@@ -69,6 +69,19 @@ export function Report() {
       >
         📄 Download .md
       </button>
+      <button
+        onClick={() => window.print()}
+        disabled={!q.data}
+        title="Opens the browser's print dialog. Choose 'Save as PDF' as the destination."
+        className={
+          'text-[11px] px-2.5 py-1 rounded-md border transition ' +
+          (q.data
+            ? 'text-cyan-300 border-cyan-500/20 bg-cyan-500/5 hover:bg-cyan-500/10'
+            : 'text-cyan-300/50 border-cyan-500/10 bg-cyan-500/5 cursor-not-allowed')
+        }
+      >
+        🖨 Print / Save as PDF
+      </button>
     </div>
   );
 
@@ -85,7 +98,7 @@ export function Report() {
         rightButtons={actions}
       />
 
-      <div className="flex-1 px-6 py-6 max-w-4xl">
+      <div className="flex-1 px-6 py-6 max-w-4xl print-target">
         {q.isLoading ? (
           <ReportSkeleton />
         ) : q.error instanceof ApiError && q.error.code === 'no_metadata_loaded' ? (
@@ -104,7 +117,12 @@ export function Report() {
           />
         ) : q.data ? (
           <Suspense fallback={<ReportSkeleton />}>
-            <Markdown source={q.data.markdown} />
+            {/* `print-target-content` so the print stylesheet can hide
+                everything outside this node and reset the report to a
+                white-on-black-friendly inline flow. */}
+            <div className="print-target-content">
+              <Markdown source={q.data.markdown} />
+            </div>
           </Suspense>
         ) : null}
       </div>

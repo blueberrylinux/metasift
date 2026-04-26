@@ -244,3 +244,145 @@ a:focus-visible {
   filter: brightness(1.2);
   z-index: 10;
 }
+
+/* ── Print styles ──────────────────────────────────────────────────────────
+   When the user hits Cmd/Ctrl+P or the "Print / Save as PDF" button on the
+   Executive Report screen, we strip the dark chrome and reflow the report
+   markdown for paper. The content area is marked with `.print-target` /
+   `.print-target-content`; everything else outside that subtree is hidden.
+
+   Browser-native print dialogs offer "Save as PDF" as a destination on
+   every modern OS — that's the no-token-cost PDF path. */
+@media print {
+  /* Reset the page background so dark navy doesn't burn the printer. */
+  html,
+  body,
+  #root {
+    background: #fff !important;
+    color: #111 !important;
+    font-family: 'Inter', system-ui, sans-serif;
+    height: auto;
+  }
+
+  /* Hide the radial-glow + grid background overlays. */
+  .hero-glow,
+  .grid-bg {
+    background: none !important;
+  }
+
+  /* Hide app chrome — only the report itself prints.
+     Each chrome element gets `display: none`. The matched markup:
+       - <aside>     = Sidebar
+       - .topbar     = TopBar (we add this class via the print target ancestor walk)
+       - PageHeader's parent flex container has chrome we don't want either.
+     Easier path: hide everything not inside `.print-target`. */
+  body * {
+    visibility: hidden;
+  }
+  .print-target,
+  .print-target * {
+    visibility: visible;
+  }
+
+  /* Pin the report to the top-left of the page so flex/sidebar offsets
+     don't push it down or in. */
+  .print-target {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 100%;
+    padding: 0 !important;
+    margin: 0;
+  }
+
+  /* Markdown typography for paper: dark text, slightly smaller, with
+     proper page-break behavior. The ReportMarkdown component sets its
+     own colors via Tailwind dark classes, so override here. */
+  .print-target-content {
+    color: #111;
+    font-size: 11pt;
+    line-height: 1.55;
+  }
+  .print-target-content h1,
+  .print-target-content h2,
+  .print-target-content h3,
+  .print-target-content h4 {
+    color: #000;
+    page-break-after: avoid;
+  }
+  .print-target-content h1 {
+    font-size: 22pt;
+    margin-top: 0;
+  }
+  .print-target-content h2 {
+    font-size: 16pt;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 4pt;
+    margin-top: 24pt;
+  }
+  .print-target-content h3 {
+    font-size: 13pt;
+  }
+
+  /* Tables — light borders, no dark fills, allow inner content to wrap. */
+  .print-target-content table {
+    width: 100%;
+    border-collapse: collapse;
+    page-break-inside: avoid;
+    background: #fff !important;
+    border: 1px solid #ccc;
+  }
+  .print-target-content th,
+  .print-target-content td {
+    border: 1px solid #ddd;
+    padding: 6pt 8pt;
+    text-align: left;
+    color: #111 !important;
+    background: #fff !important;
+    font-size: 10pt;
+    word-break: break-word;
+  }
+  .print-target-content th {
+    background: #f3f4f6 !important;
+    font-weight: 600;
+  }
+
+  /* Code blocks — wrap so a long SQL line doesn't get clipped at the
+     page edge. */
+  .print-target-content pre,
+  .print-target-content code {
+    background: #f6f8fa !important;
+    color: #111 !important;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 9pt;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .print-target-content pre {
+    padding: 8pt;
+    page-break-inside: avoid;
+  }
+  .print-target-content code {
+    padding: 1pt 4pt;
+  }
+
+  /* Lists — indented, dark dot bullets so they're visible on white. */
+  .print-target-content ul,
+  .print-target-content ol {
+    margin: 6pt 0;
+    padding-left: 22pt;
+  }
+  .print-target-content li {
+    margin: 3pt 0;
+    color: #111 !important;
+  }
+
+  /* Page setup — letter with comfortable margins. The :first page can
+     have a bigger top margin if needed; defaulting to uniform for now. */
+  @page {
+    size: letter;
+    margin: 0.75in;
+  }
+}

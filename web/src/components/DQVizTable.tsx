@@ -110,16 +110,33 @@ export function DQFailuresVizTable() {
   }
 
   const explained = q.data.rows.filter((r) => r.explanation).length;
+  const failureCols: ExportColumn<DQFailure>[] = [
+    { header: 'table_fqn', value: (r) => r.table_fqn },
+    { header: 'column', value: (r) => r.column_name ?? '' },
+    { header: 'test_definition', value: (r) => r.test_definition_name ?? '' },
+    { header: 'failure_message', value: (r) => r.result_message ?? '' },
+    { header: 'summary', value: (r) => r.explanation?.summary ?? '' },
+    { header: 'likely_cause', value: (r) => r.explanation?.likely_cause ?? '' },
+    { header: 'fix_type', value: (r) => r.explanation?.fix_type ?? '' },
+    { header: 'suggested_fix', value: (r) => r.explanation?.next_step ?? '' },
+  ];
 
   return (
     <div>
-      <div className="text-[12px] text-slate-400 mb-3 font-mono">
-        Failing DQ checks — {q.data.rows.length} total · {explained} explained
-        {explained < q.data.rows.length && (
-          <span className="text-slate-500">
-            {' '}(click Explain DQ failures in the sidebar to fill in the rest)
-          </span>
-        )}
+      <div className="flex items-start justify-between mb-3 gap-4">
+        <div className="text-[12px] text-slate-400 font-mono">
+          Failing DQ checks — {q.data.rows.length} total · {explained} explained
+          {explained < q.data.rows.length && (
+            <span className="text-slate-500">
+              {' '}(click Explain DQ failures in the sidebar to fill in the rest)
+            </span>
+          )}
+        </div>
+        <ExportButtons
+          filenameStem="metasift-dq-failures"
+          cols={failureCols as ExportColumn<unknown>[]}
+          rows={q.data.rows as unknown[]}
+        />
       </div>
       <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
@@ -266,10 +283,32 @@ export function DQGapsVizTable() {
     return acc;
   }, {});
 
+  const gapCols: ExportColumn<DQRecommendation>[] = [
+    { header: 'table_fqn', value: (r) => r.table_fqn },
+    { header: 'column', value: (r) => r.column_name ?? '' },
+    { header: 'test_definition', value: (r) => r.test_definition },
+    {
+      header: 'parameters',
+      value: (r) =>
+        (r.parameters ?? [])
+          .map((p) => `${p.name ?? ''}=${p.value ?? ''}`)
+          .join(', '),
+    },
+    { header: 'severity', value: (r) => r.severity },
+    { header: 'rationale', value: (r) => r.rationale ?? '' },
+  ];
+
   return (
     <div>
-      <div className="text-[12px] text-slate-400 mb-3 font-mono">
-        DQ recommendation gaps — {q.data.rows.length} total · {counts.critical ?? 0} critical · {counts.recommended ?? 0} recommended · {counts['nice-to-have'] ?? 0} nice-to-have
+      <div className="flex items-start justify-between mb-3 gap-4">
+        <div className="text-[12px] text-slate-400 font-mono">
+          DQ recommendation gaps — {q.data.rows.length} total · {counts.critical ?? 0} critical · {counts.recommended ?? 0} recommended · {counts['nice-to-have'] ?? 0} nice-to-have
+        </div>
+        <ExportButtons
+          filenameStem="metasift-dq-gaps"
+          cols={gapCols as ExportColumn<unknown>[]}
+          rows={q.data.rows as unknown[]}
+        />
       </div>
       <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
@@ -377,3 +416,102 @@ function TableSkeleton({ cols, rows }: { cols: number; rows: number }) {
 // `shortFQN` is imported from CopyableFQN so the column copies the
 // identical short form already used everywhere else in the app.
 export { shortFQN };
+
+// ── Export helpers ─────────────────────────────────────────────────────────
+//
+// CSV and Markdown export are more useful than PNG/screenshot for steward
+// workflows: stewards typically paste the data into a Slack message, ticket,
+// or sheet for triage — and CSV/MD survive that paste with the data intact.
+// PNG locks the data into a static image at one moment in time.
+//
+// CSV escaping: any cell containing a comma, quote, or newline gets wrapped
+// in double quotes and existing quotes get doubled (RFC 4180). Markdown
+// escaping: pipes inside cells become `\|` and newlines become a single
+// space so each cell stays on one row.
+
+function csvEscape(v: unknown): string {
+  const s = v == null ? '' : String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function mdEscape(v: unknown): string {
+  const s = v == null ? '' : String(v);
+  return s.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ');
+}
+
+function downloadBlob(filename: string, mime: string, content: string) {
+  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+interface ExportColumn<T> {
+  header: string;
+  value: (row: T) => unknown;
+}
+
+function rowsToCsv<T>(cols: ExportColumn<T>[], rows: T[]): string {
+  const head = cols.map((c) => csvEscape(c.header)).join(',');
+  const body = rows
+    .map((r) => cols.map((c) => csvEscape(c.value(r))).join(','))
+    .join('\n');
+  return `${head}\n${body}\n`;
+}
+
+function rowsToMarkdown<T>(cols: ExportColumn<T>[], rows: T[]): string {
+  const head = `| ${cols.map((c) => mdEscape(c.header)).join(' | ')} |`;
+  const sep = `| ${cols.map(() => '---').join(' | ')} |`;
+  const body = rows
+    .map(
+      (r) => `| ${cols.map((c) => mdEscape(c.value(r))).join(' | ')} |`,
+    )
+    .join('\n');
+  return `${head}\n${sep}\n${body}\n`;
+}
+
+function ExportButtons({
+  filenameStem,
+  cols,
+  rows,
+}: {
+  filenameStem: string;
+  cols: ExportColumn<unknown>[];
+  rows: unknown[];
+}) {
+  const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  return (
+    <div className="flex gap-2">
+      <button
+        type="button"
+        onClick={() =>
+          downloadBlob(
+            `${filenameStem}-${ts}.csv`,
+            'text/csv',
+            rowsToCsv(cols, rows),
+          )
+        }
+        className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 bg-slate-900/40 hover:text-white hover:border-slate-600 transition"
+      >
+        Export .csv
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          downloadBlob(
+            `${filenameStem}-${ts}.md`,
+            'text/markdown',
+            rowsToMarkdown(cols, rows),
+          )
+        }
+        className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 bg-slate-900/40 hover:text-white hover:border-slate-600 transition"
+      >
+        Export .md
+      </button>
+    </div>
+  );
+}
