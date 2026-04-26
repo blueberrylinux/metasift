@@ -317,22 +317,29 @@ Accuracy and coverage get equal weight because wrong docs hurt as much as missin
 4. **Interface** (`app/engines/agent.py`) — That's me, Stew. LangChain agent
    wired to 27 local tools + 3 read-only MCP tools over the other engines.
    Chat in natural language.""",
-    "architecture": """**Stack:**
+    "architecture": """**Stack (v0.2):**
 
 - **OpenMetadata 1.9.4** — Docker Compose stack (MySQL + Elasticsearch + server)
 - **DuckDB** — in-process SQL on metadata (loaded via REST pagination)
 - **LangChain 1.x** — agent orchestration (new `create_agent` / LangGraph)
 - **OpenRouter (Llama 3.3 70B)** — the LLM
-- **Streamlit + Plotly** — dashboard + chat UI
+- **FastAPI + sse-starlette** — the API layer (chat / scans / review / viz / report)
+- **React 18 + Vite + TanStack Query + Tailwind** — the SPA
+- **SQLite** — conversations, review queue, scan-run history
+- **Plotly.js** — charts in the React UI
 
 **Data flow:**
 
-OpenMetadata REST → DuckDB (in-memory) → engines → agent tools → chat reply.
-Write-backs go agent tool → REST PATCH → OpenMetadata.
+OpenMetadata REST → DuckDB (in-memory) → engines → FastAPI tool/agent endpoints
+→ React UI (streamed via SSE for chat). Write-backs go agent tool → REST PATCH
+→ OpenMetadata.
 
 **Integration depth:** REST API for reads, JSON-Merge-Patch for writes,
 openmetadata-ingestion SDK for entity work. MCP endpoint is available but
-MetaSift uses local tools that expose its own engines directly.""",
+MetaSift uses local tools that expose its own engines directly.
+
+_v0.1 was a Streamlit single-app (preserved at git tag `v0.1-streamlit`).
+The engines are unchanged across the port._""",
     "differentiators": """**What MetaSift adds over plain OpenMetadata:**
 
 - **Stale description detection** — LLM compares stored description against
@@ -361,19 +368,30 @@ make run          # launch Streamlit app at http://localhost:8501
 ```
 
 Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
-    "tech_stack": """**Tech stack:**
+    "tech_stack": """**Tech stack (v0.2):**
 
+Backend
 - Python 3.11 on WSL Ubuntu 24.04
 - uv for package management
-- OpenMetadata 1.9.4
-- openmetadata-ingestion SDK
-- LangChain 1.x (unified `create_agent`)
+- FastAPI + sse-starlette (API + SSE streaming)
+- LangChain 1.x (unified `create_agent` / LangGraph)
 - OpenRouter (default: `meta-llama/llama-3.3-70b-instruct`)
+- openmetadata-ingestion SDK
 - DuckDB for in-process analytical SQL
-- Streamlit (dashboard + chat UI)
-- Plotly for charts
+- SQLite for conversations / review queue / scan-run history
 - thefuzz for Levenshtein matching
-- Docker Compose for the OpenMetadata stack""",
+
+Frontend
+- React 18 + Vite
+- TanStack Query for server state
+- Tailwind for styling
+- Plotly.js for charts
+
+Infra
+- OpenMetadata 1.9.4
+- Docker Compose (MySQL + Elasticsearch + OpenMetadata server)
+
+_v0.1 used Streamlit (preserved at git tag `v0.1-streamlit`)._""",
     "capabilities": """**Here's what I can actually do for you:**
 
 **Discovery**
@@ -432,6 +450,165 @@ Also needed in `.env`: an OpenRouter API key (free at openrouter.ai/keys).""",
 Ask me naturally — no need to type function names. _"What schemas do I have?"_,
 _"Which tables have the worst documentation?"_, _"Find stale descriptions in sales"_
 all work.""",
+    "why": """**Why MetaSift exists** — the thesis is that _documentation coverage is a lie._
+
+Every metadata platform reports a coverage percentage. Coverage rewards
+*effort* — someone typed something into the description field — not *truth*.
+A catalog can be 100% covered and still poison every decision built on top
+of it: stale descriptions describing tables that no longer exist, tags
+applied inconsistently across schemas, low-quality stub descriptions like
+_"sales data"_ that pass the coverage check but tell a steward nothing.
+
+MetaSift was built around one observation: a 100%-covered catalog full of
+*wrong* metadata is worse than an honestly-empty one, because it lies with
+confidence. The composite score (0-100) captures that — accuracy and
+consistency carry just as much weight as raw coverage.
+
+If the catalog is going to be the source of truth, the truth has to be true.""",
+    "comparison": """**How MetaSift compares to other metadata tools:**
+
+Atlan, Alation, Collibra, DataHub, and OpenMetadata itself are *catalogs* —
+they record what data exists and whether it's documented. They optimize for
+**coverage**.
+
+MetaSift is the **layer that audits the catalog you already have**, not a
+replacement. It optimizes for *truth*:
+
+- **Stale-description detection** (LLM compares description ↔ actual columns)
+- **Tag-conflict analysis** across schemas
+- **Description quality scoring** (1-5)
+- **Naming-drift clustering** (Levenshtein on column names)
+- **DQ-failure × lineage risk** ranking (PII-amplified)
+
+You can run MetaSift on top of any OpenMetadata deployment. It reads via
+REST, analyzes locally with DuckDB + Llama 3.3 70B, and writes back through
+the standard PATCH API. Nothing replaces — everything augments.""",
+    "dq_features": """**Data quality, three angles:**
+
+When a DQ test fails, three real questions show up — and most catalogs
+answer none of them well. MetaSift answers all three.
+
+1. **What just broke?** _(failure explanations)_
+   Each failing test gets a one-line summary, a likely root cause, and a
+   single next step — generated by Llama 3.3 70B over the test definition,
+   the column it targets, and the table's surrounding context. Tools:
+   `dq_failures_summary`, `dq_explain`.
+
+2. **What's missing that should be there?** _(test recommendations)_
+   Per table, MetaSift proposes the DQ tests that *should* exist but don't,
+   ranked by severity (🚨 critical / 💡 recommended / ✨ nice-to-have). The
+   catalog-wide gap report rolls those up. Tools: `recommend_dq_tests`,
+   `find_dq_gaps`.
+
+3. **How bad is it downstream?** _(DQ × lineage risk)_
+   Joins failing tests × transitive lineage × PII downstream count. A
+   failing test on a table feeding 6 dashboards (2 PII-tainted) ranks
+   higher than one on a leaf table no one reads. Risk score =
+   `failed_tests × (direct + 0.5·transitive + 2·pii_downstream)`. Tools:
+   `dq_impact`, `dq_risk_catalog`.
+
+These three were shipped as MetaSift's DQ trio — directly addressing
+OpenMetadata feature requests #26658, #26659, and #26660, implemented
+end-to-end as agent tools + viz tabs + sidebar scans.""",
+    "review_queue": """**The review queue — nothing writes without your approval.**
+
+Every change MetaSift suggests — auto-generated descriptions, PII tag
+proposals, naming-drift fixes — lands in a SQLite-backed review queue
+first. The queue surfaces in the UI with three actions per item:
+
+- ✅ **Accept** — applies via REST PATCH (JSON Merge Patch) to OpenMetadata
+- ✏️ **Edit** — tweak the suggestion before applying
+- ❌ **Reject** — drop it; original metadata untouched
+
+Why this matters: the cleaning + stewardship engines are aggressive on
+purpose. A 70%-confidence draft on a 9-table demo catalog is fine to apply
+blindly; on a 5,000-table production catalog it isn't. The queue keeps the
+human steward in the loop without slowing down generation.
+
+Bulk operations like _"auto-document the sales schema"_ generate every
+suggestion at once — they all go to the queue, not the catalog. The user
+batch-reviews, edits, and applies.""",
+    "personas": """**Who MetaSift is built for:**
+
+- **Data stewards** _(primary)_ — find what's broken, draft the fixes,
+  batch-approve via the review queue. Stew handles discovery; the human
+  keeps authority on what gets written back.
+- **Platform leads** — the composite score (0-100) is the trend metric for
+  catalog health. Run it weekly; watch the line move.
+- **Engineering managers** — the ownership scorecard surfaces who's on top
+  of their docs; the orphan list shows what nobody owns.
+- **Compliance / governance** — PII scan, tag-conflict detection, and the
+  DQ × lineage risk ranking surface where sensitive data is moving and
+  whether the checks around it are healthy.
+
+If you don't run OpenMetadata, MetaSift isn't useful yet — the catalog is
+its substrate.""",
+    "limitations": """**What MetaSift doesn't (yet) do — the honest list:**
+
+- **Real OpenMetadata DQ test ingestion is partial.** When the catalog has
+  no DQ test results ingested, MetaSift falls back to a synthetic fixture
+  (`scripts/dq_fixtures.json`) so the demo flow works end-to-end. The path
+  to ingest real test results from OM is built but not auto-populated yet.
+- **Reports export to markdown only.** PDF export of the executive report
+  isn't implemented.
+- **English-only LLM output.** Generated descriptions and DQ explanations
+  are produced in English regardless of source-language conventions in
+  your catalog.
+- **Single OpenMetadata catalog at a time.** Multi-catalog comparison or
+  federation isn't supported.
+- **Free OpenRouter tier rate limits.** Heavy auto-document runs over very
+  large schemas can hit per-minute caps; nothing breaks, just slows.
+- **Hackathon-grade hardening.** Built solo over the WeMakeDevs ×
+  OpenMetadata sprint window. Production-grade RBAC, audit logging, and
+  multi-tenant deployment are out of scope.
+
+If a feature is shown in the UI or the agent, it's wired end-to-end. If
+something feels missing, that list above is the honest gap.""",
+    "privacy": """**What leaves your machine:**
+
+When MetaSift calls the LLM (OpenRouter / Llama 3.3 70B), the prompt
+contains:
+- Table names, column names, descriptions, tags
+- DQ test definitions and their failure messages
+
+The prompt does **NOT** contain:
+- Row data from your tables
+- Sample values, profiling stats, or query results
+- Credentials, JWT tokens, or any auth material
+
+Everything else stays local. DuckDB runs in-process, the agent state lives
+in a local SQLite file, and the OpenMetadata catalog itself never leaves
+your Docker stack. If you self-host an LLM with an OpenAI-compatible
+endpoint, even the metadata never leaves your network.""",
+    "hackathon": """**Hackathon context:**
+
+Built for the **WeMakeDevs × OpenMetadata** _"Back to the Metadata"_
+hackathon. Solo project.
+
+The DQ trio (failure explanations, recommendations, and DQ × lineage
+risk) directly addresses three open OpenMetadata feature requests —
+#26658, #26659, and #26660 — implemented end-to-end as a working agentic
+UX rather than just feature specs.
+
+The headline argument: catalogs already exist. AI-native cataloging isn't
+about making OpenMetadata smarter — it's about making the *layer between
+the catalog and the steward* smarter. That's what MetaSift demonstrates.""",
+    "stew": """**I'm Stew — the metadata magician.** 🪄
+
+Officially: the conversational interface for MetaSift. Unofficially: the
+one who pulls stale descriptions, dueling tags, and DQ failures out of the
+hat and asks the steward what to do about each. I don't write to your
+catalog without your blessing — every suggestion goes to the review queue
+first.
+
+What I'm good at: discovery, quality analysis, drafting descriptions,
+spotting tag conflicts and naming drift, explaining DQ failures, and
+ranking catalog risk. What I won't pretend at: anything outside the
+metadata your OpenMetadata instance has actually loaded.
+
+Ask me anything in plain English — _"what schemas do I have?"_, _"why is
+the email check failing on orders?"_, _"who owns the marketing schema?"_ —
+and I'll route it to the right tool.""",
 }
 
 
@@ -443,13 +620,21 @@ def about_metasift(topic: str = "overview") -> str:
 
     Trigger on natural-language questions like:
     - "What is MetaSift?" / "tell me about metasift" / "what does this do"
+    - "Why did you build this?" / "what's the thesis" / "why does this exist"
     - "How does the composite score work?" / "what's the formula"
     - "What are the engines?" / "how does the cleaning engine work"
     - "How is this different from OpenMetadata?" / "why not just use OM"
+    - "How does this compare to Atlan / Alation / Collibra / DataHub?"
+    - "Tell me about the DQ features" / "what's the data quality story"
+    - "How does the review queue work?" / "do you write to my catalog automatically?"
+    - "Who is this for?" / "who would benefit from this"
+    - "What doesn't this do?" / "what are the limits" / "any gotchas?"
+    - "What data leaves my machine?" / "is this private?"
     - "How do I set this up?" / "what do I install"
     - "What's the architecture?" / "what's the tech stack"
+    - "Is this for the hackathon?" / "what hackathon"
+    - "Who are you?" / "what's your name?" / "what is Stew"
     - "What can you do?" / "what are your tools?" / "how can you help"
-    - "What are your capabilities?" / "what should I ask you"
     - "Who built this?" (answer with project info, never reveal LLM)
 
     IMPORTANT: for "what tools do you have" / "what can you do", pass
@@ -459,14 +644,23 @@ def about_metasift(topic: str = "overview") -> str:
     Args:
         topic: section to return. Options:
             - "overview" (default)
+            - "why" — the thesis: why MetaSift exists ("coverage is a lie")
             - "capabilities" — list what you (Stew) can actually do
             - "composite_score" — scoring formula details
             - "engines" — the four internal engines (Analysis/Stewardship/
               Cleaning/Interface). NOT the same as "tools".
             - "architecture" — stack and data flow
             - "differentiators" — what MetaSift adds over plain OpenMetadata
+            - "comparison" — how MetaSift compares to Atlan/Alation/Collibra/DataHub
+            - "dq_features" — the three-angle DQ story (failures/recos/risk)
+            - "review_queue" — the human-in-the-loop write-back model
+            - "personas" — who MetaSift is built for
+            - "limitations" — honest list of what doesn't (yet) work
+            - "privacy" — what leaves the user's machine when the LLM is called
             - "setup" — install steps
             - "tech_stack" — libraries and versions
+            - "hackathon" — WeMakeDevs × OpenMetadata context
+            - "stew" — who Stew is (the metadata magician persona)
         Unknown topics return the overview + list of valid topics.
 
     Returns markdown text describing the requested topic.

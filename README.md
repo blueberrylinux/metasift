@@ -137,7 +137,7 @@ These capabilities don't exist in OpenMetadata, Collate, or any other catalog to
 ```mermaid
 graph TB
     subgraph Frontend
-        UI[React 19 + Vite SPA · v0.2]
+        UI[React 18 + Vite SPA · v0.2]
         UIv1[Streamlit UI · v0.1, tagged v0.1-streamlit]
         Stew[Stew AI Wizard]
         Viz[11-tab Visualizations]
@@ -251,7 +251,7 @@ MetaSift's headline metric — weighted combination:
 | MCP bridge | `data-ai-sdk` (import `ai_sdk`) | Converts OM's MCP tools into LangChain `BaseTool` instances |
 | LLM | Any OpenAI-compatible endpoint | Default: OpenRouter with Llama 3.3 70B (5 tasks) + GPT-4o-mini (tool-calling, avoids Llama's introspection loops). User can swap to OpenAI, Gemini, Groq, Ollama, or a custom endpoint via the in-app LLM setup. |
 | Analytics | DuckDB (in-memory) | Zero-config SQL over the metadata cache; recursive CTEs for lineage |
-| Frontend (v0.2) | React 19 · Vite · TanStack Query · Tailwind | SPA with multi-conversation chat, ⌘K palette, live SSE streaming, Print→PDF reports |
+| Frontend (v0.2) | React 18 · Vite · TanStack Query · Tailwind | SPA with multi-conversation chat, ⌘K palette, live SSE streaming, Print→PDF reports |
 | Frontend (v0.1) | Streamlit | Original submission demo, preserved at tag `v0.1-streamlit` for iteration history |
 | Visualization | Plotly · Plotly.js | Interactive charts shared by both frontends |
 | Fuzzy matching | thefuzz | Naming inconsistency detection |

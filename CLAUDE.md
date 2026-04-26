@@ -26,7 +26,7 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 - LangChain for agent orchestration
 - OpenRouter as the sole LLM provider (free tier) — default model: `meta-llama/llama-3.3-70b-instruct:free`
 - DuckDB for in-process analytical SQL on metadata
-- v0.2: React 19 + Vite + TanStack Query + Tailwind for the SPA; FastAPI + sse-starlette for the API; SQLite for conversations / review queue / scan-run history; Plotly.js for charts
+- v0.2: React 18 + Vite + TanStack Query + Tailwind for the SPA; FastAPI + sse-starlette for the API; SQLite for conversations / review queue / scan-run history; Plotly.js for charts
 - v0.1 (preserved): Streamlit + Plotly via `st.plotly_chart()`
 - thefuzz for Levenshtein-based naming inconsistency detection
 
@@ -34,7 +34,7 @@ Core thesis: Documentation coverage is a lie. A catalog can be 100% documented a
 
 - `app/main.py` — Streamlit entry point (v0.1, preserved at tag `v0.1-streamlit`)
 - `app/api/` — FastAPI port (v0.2): routers for chat / scans / review / viz / report / analysis / dq / llm / om, SQLite store, SSE adapters
-- `web/` — React 19 + Vite SPA (v0.2): screens/, components/, lib/api.ts
+- `web/` — React 18 + Vite SPA (v0.2): screens/, components/, lib/api.ts
 - `app/config.py` — Settings from .env via python-dotenv
 - `app/clients/llm.py` — LLM router, picks model per task type (toolcall, description, classification, stale, scoring, reasoning)
 - `app/clients/openmetadata.py` — SDK wrapper + REST client + health check

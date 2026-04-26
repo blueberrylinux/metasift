@@ -104,7 +104,7 @@ web-install:
 
 web:
 	@test -d web/node_modules || (echo "→ Installing web deps (one-time)..." && $(MAKE) web-install)
-	cd web && npm run dev
+	cd web && npm run dev -- --open
 
 build-web:
 	@test -d web/node_modules || $(MAKE) web-install

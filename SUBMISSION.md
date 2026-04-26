@@ -38,7 +38,7 @@ end-to-end. It worked, but Streamlit's whole-page rerun model was a poor fit
 for streaming chat, multi-step scans, and the kind of dense viz tabs the
 project had grown into.
 
-**v0.2** (April 26 — this submission) is a full port to FastAPI + React 19 +
+**v0.2** (April 26 — this submission) is a full port to FastAPI + React 18 +
 TanStack Query, completed in 5 calendar days across 70+ commits on
 `port/fastapi-react` (April 21 v0.1 → April 26 v0.2).
 
@@ -159,7 +159,7 @@ runs the React app (`make api && cd web && npm run dev`).
 - LangChain 1.x with `create_agent` / LangGraph
 - OpenRouter by default (any OpenAI-compatible endpoint works)
 - DuckDB for in-process analytical SQL
-- **v0.2:** FastAPI + Server-Sent Events for the API; React 19 + Vite + TanStack Query + Tailwind for the SPA; SQLite for conversations / review queue / scan-run history; Plotly.js for charts
+- **v0.2:** FastAPI + Server-Sent Events for the API; React 18 + Vite + TanStack Query + Tailwind for the SPA; SQLite for conversations / review queue / scan-run history; Plotly.js for charts
 - **v0.1 (tagged `v0.1-streamlit`):** Streamlit + Plotly for the UI
 - `thefuzz` for fuzzy naming clusters
 - `httpx` for REST + the dynamic OpenRouter catalog fetch
