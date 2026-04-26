@@ -38,7 +38,7 @@ export function TopBar({ onOpenWelcome }: { onOpenWelcome?: () => void }) {
   return (
     <div className="h-14 border-b border-slate-800/80 backdrop-blur-md bg-slate-950/70 flex items-center justify-between px-5 sticky top-0 z-30">
       <div className="flex items-center gap-3">
-        <LogoM size={30} />
+        <LogoM size={44} />
         <div>
           <div className="text-[13px] font-bold text-white tracking-tight leading-none">
             MetaSift
