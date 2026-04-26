@@ -292,10 +292,13 @@ def impact(fqn: str, duck_ok: DuckOk) -> DQImpactResponse:
     try:
         data = analysis.dq_impact(fqn)
     except Exception as e:
+        # Engine errors can leak SQL fragments / stack frames / file paths.
+        # Mirror the chat.py + scans.py pattern: log the full trace server-
+        # side, surface a generic message to the HTTP client.
         logger.exception(f"dq_impact failed for {fqn}: {e}")
         raise errors.ApiError(
             errors.ErrorCode.INTERNAL_ERROR,
-            f"Couldn't compute impact for {fqn}: {e}",
+            "Couldn't compute impact. Check the server logs for details.",
             status_code=500,
         ) from e
     return DQImpactResponse(**data)

@@ -39,7 +39,7 @@ for streaming chat, multi-step scans, and the kind of dense viz tabs the
 project had grown into.
 
 **v0.2** (April 26 — this submission) is a full port to FastAPI + React 19 +
-TanStack Query, completed in 5 calendar days across 68 commits on
+TanStack Query, completed in 5 calendar days across 70+ commits on
 `port/fastapi-react` (April 21 v0.1 → April 26 v0.2).
 
 The point worth flagging: **the engines didn't change.** All four — Analysis,
