@@ -1,15 +1,18 @@
 /**
- * Client-side catalog of Stew's local tools — names mirror `ALL_TOOLS` in
- * `app/engines/tools.py` (26 entries). Used by the Composer's ⌘K/Ctrl+K
- * palette to give users a discovery path into Stew's capabilities.
+ * Client-side catalog of Stew's tools. Local entries mirror `ALL_TOOLS` in
+ * `app/engines/tools.py`; MCP entries mirror the allowlist in
+ * `app/engines/agent.py::_MCP_TOOL_ALLOWLIST` (read-only catalog discovery
+ * straight to OpenMetadata, no DuckDB cache hop).
  *
- * `prompt` is the natural-language question inserted into the composer on
- * click. Keep it phrased as a question so LangChain's tool router picks
- * the intended tool. Where a tool needs an FQN or arg, the prompt leaves
- * a `{placeholder}` for the user to fill in before sending.
+ * Used by the Composer's ⌘K/Ctrl+K palette to give users a discovery path
+ * into Stew's capabilities. `prompt` is the natural-language question
+ * inserted into the composer on click. Keep it phrased as a question so
+ * LangChain's tool router picks the intended tool. Where a tool needs an
+ * FQN or arg, the prompt leaves a `{placeholder}` for the user to fill in
+ * before sending.
  *
- * Tool coverage here must stay in sync with `ALL_TOOLS`. When you add a
- * @tool in the backend, append a row here too.
+ * Tool coverage here must stay in sync with backend. When you add a @tool
+ * in `tools.py` or extend the MCP allowlist in `agent.py`, append a row.
  */
 
 export type ToolCategory =
@@ -17,7 +20,8 @@ export type ToolCategory =
   | 'Analysis'
   | 'Cleaning'
   | 'Stewardship'
-  | 'DQ · risk';
+  | 'DQ · risk'
+  | 'Catalog · MCP';
 
 export interface StewTool {
   name: string;
@@ -198,6 +202,29 @@ export const STEW_TOOLS: StewTool[] = [
     description: 'Rank the whole catalog by DQ risk score.',
     prompt: 'Rank the catalog by DQ risk.',
   },
+
+  // OpenMetadata MCP — read-only catalog discovery via the ai_sdk MCP
+  // bridge (no DuckDB cache hop). Allowlist mirrors `_MCP_TOOL_ALLOWLIST`
+  // in app/engines/agent.py — write tools (patch_entity, glossary CRUD)
+  // are deliberately excluded so writes stay gated through the review queue.
+  {
+    name: 'search_metadata',
+    category: 'Catalog · MCP',
+    description: 'Keyword search across OpenMetadata entities — tables, dashboards, terms.',
+    prompt: 'Search OpenMetadata for "{keyword}".',
+  },
+  {
+    name: 'get_entity_details',
+    category: 'Catalog · MCP',
+    description: 'Fetch a single entity’s full state from OpenMetadata.',
+    prompt: 'Show me the full OpenMetadata record for {fullyQualifiedName}.',
+  },
+  {
+    name: 'get_entity_lineage',
+    category: 'Catalog · MCP',
+    description: 'Upstream + downstream lineage subgraph for an entity (raw graph view).',
+    prompt: 'Show me the upstream and downstream lineage of {fullyQualifiedName}.',
+  },
 ];
 
 export const TOOL_CATEGORIES: ToolCategory[] = [
@@ -206,4 +233,5 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
   'Cleaning',
   'Stewardship',
   'DQ · risk',
+  'Catalog · MCP',
 ];

@@ -132,7 +132,7 @@ export function ToolsPalette({
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={`Search Stew's tools… (${STEW_TOOLS.length} local)`}
+            placeholder={`Search Stew's tools… (${STEW_TOOLS.length})`}
             className="flex-1 bg-transparent outline-none text-[13px] text-slate-100 placeholder:text-slate-600"
           />
           <kbd className="text-[9px] font-mono text-slate-600 border border-slate-800 px-1 py-0.5 rounded">
