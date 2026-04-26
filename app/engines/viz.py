@@ -857,14 +857,15 @@ def dq_failure_table() -> go.Figure | None:
 
     fig = go.Figure(
         go.Table(
-            # Identifier columns get just enough width to read at a glance;
-            # the four text-heavy columns (Failure / Summary / Likely cause /
-            # Suggested fix) get the lion's share so multi-line content doesn't
-            # need 5 wraps to render.
-            columnwidth=[80, 130, 70, 130, 220, 220, 220, 110, 220],
+            # Eight columns (no separate "Test" column — the test_name is
+            # internal noise that just truncates to "invoice_a…" in the
+            # available width, and Table + Column + Definition already
+            # uniquely identifies the failing test for the steward).
+            # Identifier columns sized for their actual content; the four
+            # text-heavy columns split the remaining width evenly.
+            columnwidth=[150, 90, 170, 240, 240, 240, 130, 240],
             header={
                 "values": [
-                    "<b>Test</b>",
                     "<b>Table</b>",
                     "<b>Column</b>",
                     "<b>Definition</b>",
@@ -881,7 +882,6 @@ def dq_failure_table() -> go.Figure | None:
             },
             cells={
                 "values": [
-                    df["test_name"],
                     [_short(f) for f in df["table_fqn"]],
                     [_dash(c) for c in df["column_name"]],
                     df["test_definition"],
