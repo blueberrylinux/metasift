@@ -307,6 +307,41 @@ a:focus-visible {
     margin: 0;
   }
 
+  /* Force solid (non-alpha) backgrounds across the report. ReportMarkdown
+     uses `bg-ink-panel/30` on the wrapper and `bg-ink-panel/60` on thead —
+     alpha layers that Chrome's print engine doesn't always alpha-composite
+     consistently across page breaks (some pages render the alpha layer,
+     some don't, producing the mixed dark/light pages seen at first). With
+     solid fills the engine has nothing to blend; every page paints the
+     same color. The colors below match the on-screen alpha-blended result
+     so the printed PDF visually matches the screen.
+
+     Hex values:
+       #020617 = body bg / slate-950
+       #0d1726 = approximate of bg-ink-panel/30 on body (panel + body @ 30/70)
+       #131f33 = approximate of bg-ink-panel/60 on body (panel + body @ 60/40) */
+  .print-target-content article {
+    background: #0d1726 !important;
+    border-color: #1e293b !important;
+  }
+  .print-target-content thead,
+  .print-target-content thead tr,
+  .print-target-content thead th {
+    background: #131f33 !important;
+  }
+  .print-target-content tbody tr,
+  .print-target-content tbody td {
+    background: #0d1726 !important;
+  }
+  /* Inline code (FQN highlights) — solid panel fill. */
+  .print-target-content code:not(pre code) {
+    background: #131f33 !important;
+  }
+  /* Code blocks. */
+  .print-target-content pre {
+    background: #020617 !important;
+  }
+
   /* Avoid awkward page breaks inside structured blocks. The dark theme
      itself is unchanged — colors flow through from the on-screen styles. */
   .print-target-content h1,
