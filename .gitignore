@@ -39,3 +39,8 @@ web/vite.config.d.ts
 /Port Risk Mitigation.md
 /MetaSift App.html
 /MetaSift Port Scaffolding.html
+
+# Personal dev plans / future-work notes — not part of the project's public
+# surface. Keep the file in the working tree (so it's there when I want it),
+# just don't push it.
+/SANDBOX_DEPLOYMENT_PLAN.md
