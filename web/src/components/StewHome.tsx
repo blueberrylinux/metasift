@@ -41,8 +41,8 @@ export function StewHome({
           Your metadata wizard — ask anything about your catalog.
         </p>
         <div className="mt-3 flex items-center gap-3 text-[11px] text-slate-500">
-          <span className="chip">29 tools</span>
-          <span className="font-mono">26 local · 3 MCP</span>
+          <span className="chip">30 tools</span>
+          <span className="font-mono">27 local · 3 MCP</span>
         </div>
 
         <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-2.5 w-full max-w-3xl">

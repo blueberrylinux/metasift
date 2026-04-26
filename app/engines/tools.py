@@ -315,7 +315,7 @@ Accuracy and coverage get equal weight because wrong docs hurt as much as missin
    and next-step recommendations.
 
 4. **Interface** (`app/engines/agent.py`) — That's me, Stew. LangChain agent
-   wired to 26 local tools + 3 read-only MCP tools over the other engines.
+   wired to 27 local tools + 3 read-only MCP tools over the other engines.
    Chat in natural language.""",
     "architecture": """**Stack:**
 
@@ -1108,6 +1108,49 @@ def impact_check(fqn: str) -> str:
 
 
 @tool
+def impact_catalog(limit: int = 10) -> str:
+    """Catalog-wide ranking of tables by blast radius / impact score.
+
+    ★ Use this for _"blast radius top 10"_, _"top blast radius"_, _"most
+      critical tables"_, _"biggest downstream footprint"_, _"rank tables
+      by impact"_, _"which tables would hurt most if changed?"_ ★
+
+    Per-table impact_check tells you a single table's blast radius. This
+    tool ranks the whole catalog so the user sees the top N at a glance.
+    Sorted by weighted impact score (direct + 0.5×transitive_only + 2×PII).
+    """
+    if not _has_data():
+        return _EMPTY_HINT
+    df = analysis.top_blast_radius(limit=int(limit) if limit else 10)
+    if df.empty:
+        return (
+            "No lineage data — every table looks like a leaf right now. "
+            "Click **🔄 Refresh metadata** to repopulate, or check that "
+            "lineage edges have been ingested into OpenMetadata."
+        )
+    # If the top scores are all 0, lineage is empty even though tables exist.
+    if (df["impact_score"] == 0).all():
+        return (
+            "All tables show impact score 0 — no downstream lineage edges in "
+            "the catalog. Ingest lineage in OpenMetadata to populate this view."
+        )
+    lines: list[str] = [
+        f"**Top {len(df)} blast-radius tables** — direct + transitive downstream, PII-amplified",
+        "",
+        "| Rank | Table | Direct | Transitive | PII downstream | Impact score |",
+        "|---|---|---|---|---|---|",
+    ]
+    for i, (_, r) in enumerate(df.iterrows(), start=1):
+        short = ".".join(r["fqn"].split(".")[-2:])
+        lines.append(
+            f"| {i} | `{short}` | {int(r['direct'])} | "
+            f"{int(r['transitive'])} | {int(r['pii_downstream'])} | "
+            f"**{r['impact_score']}** |"
+        )
+    return "\n".join(lines)
+
+
+@tool
 def auto_document_schema(schema_name: str) -> str:
     """Draft descriptions for EVERY undocumented table in a schema at once.
 
@@ -1355,6 +1398,7 @@ ALL_TOOLS = [
     about_metasift,
     ownership_report,
     impact_check,
+    impact_catalog,
     pii_propagation,
     dq_impact,
     dq_risk_catalog,

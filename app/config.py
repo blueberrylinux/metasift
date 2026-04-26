@@ -16,6 +16,17 @@ def _env(key: str, default: str = "") -> str:
     return os.getenv(key, default).strip()
 
 
+def _agent_recursion_limit_from_env() -> int:
+    """Parse AGENT_RECURSION_LIMIT into a clamped int. A malformed value
+    (non-numeric, negative, etc.) silently falls back to 25 instead of
+    crashing the import — config parsing must not break the app boot."""
+    raw = _env("AGENT_RECURSION_LIMIT", "25") or "25"
+    try:
+        return max(5, min(50, int(raw)))
+    except (TypeError, ValueError):
+        return 25
+
+
 @dataclass(frozen=True)
 class Settings:
     # OpenMetadata
@@ -60,6 +71,11 @@ class Settings:
     # App
     app_env: str = field(default_factory=lambda: _env("APP_ENV", "development"))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
+
+    # Agent — caps how many LangGraph nodes a single chat turn can traverse
+    # before raising GraphRecursionError. Mirrors api_settings.agent_recursion_limit
+    # so the Streamlit app and the FastAPI port stay in lockstep.
+    agent_recursion_limit: int = field(default_factory=lambda: _agent_recursion_limit_from_env())
 
     # Paths
     data_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data")

@@ -53,7 +53,11 @@ class ApiSettings(BaseSettings):
         return v if v.is_absolute() else (PROJECT_ROOT / v).resolve()
 
     # Agent + scan behavior
-    agent_recursion_limit: int = Field(default=15, ge=5, le=50)
+    # 25 leaves headroom for ambiguous prompts that legitimately fan out across
+    # 6-8 tool calls (e.g. blast-radius rankings that hit list_tables → many
+    # impact_check calls); the original 15 was tight enough that those would
+    # blow up with GraphRecursionError on real demos.
+    agent_recursion_limit: int = Field(default=25, ge=5, le=50)
     scan_max_concurrent: int = Field(
         default=1,
         description="Only one long-running scan at a time in single-worker mode.",

@@ -52,8 +52,8 @@ const FEATURES: Feature[] = [
   {
     icon: '💬',
     title: 'Stew',
-    desc: 'Chat with a LangChain agent grounded in 26 local tools + 3 MCP. Every reply shows its work.',
-    chip: '29 tools',
+    desc: 'Chat with a LangChain agent grounded in 27 local tools + 3 MCP. Every reply shows its work.',
+    chip: '30 tools',
     tone: 'emerald',
   },
 ];

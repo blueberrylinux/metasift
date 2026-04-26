@@ -34,6 +34,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import errors, store
+from app.api.config import api_settings
 from app.api.schemas import (
     ChatMessage,
     ChatStreamRequest,
@@ -162,7 +163,7 @@ async def stream_agent_events(
         try:
             for chunk in agent.stream(
                 {"messages": lc_messages},
-                config={"recursion_limit": 15},
+                config={"recursion_limit": api_settings.agent_recursion_limit},
                 stream_mode="updates",
             ):
                 if cancel_event.is_set():

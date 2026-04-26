@@ -1432,7 +1432,7 @@ if user_input:
         with st.spinner("Stew is thinking…"):
             for chunk in st.session_state.agent.stream(
                 {"messages": lc_messages},
-                config={"recursion_limit": 15},
+                config={"recursion_limit": settings.agent_recursion_limit},
                 stream_mode="updates",
             ):
                 for node_data in chunk.values():

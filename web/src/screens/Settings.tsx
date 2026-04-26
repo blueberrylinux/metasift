@@ -919,10 +919,10 @@ function AgentToolsCard() {
         <div>
           <SectionLabel>Agent tools</SectionLabel>
           <div className="text-[11px] text-slate-500 mt-0.5">
-            26 local MetaSift tools + 3 allowlisted MCP = up to 29 tools per turn
+            27 local MetaSift tools + 3 allowlisted MCP = up to 30 tools per turn
           </div>
         </div>
-        <span className="chip">29 loaded</span>
+        <span className="chip">30 loaded</span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {buckets.map((b) => (

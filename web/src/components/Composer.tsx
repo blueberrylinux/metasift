@@ -191,7 +191,7 @@ export function Composer({
           <div className="flex items-center justify-between px-3 py-1.5 border-t border-slate-800 text-[10px] text-slate-500 gap-2 flex-wrap">
             <div className="flex items-center gap-3 min-w-0">
               <ModelQuickPicker />
-              <span className="font-mono">· 29 tools</span>
+              <span className="font-mono">· 30 tools</span>
               <span className="font-mono">· writes gated</span>
               {footerExtra}
             </div>
