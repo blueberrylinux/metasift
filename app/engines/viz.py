@@ -857,7 +857,11 @@ def dq_failure_table() -> go.Figure | None:
 
     fig = go.Figure(
         go.Table(
-            columnwidth=[80, 110, 70, 110, 180, 180, 180, 100, 180],
+            # Identifier columns get just enough width to read at a glance;
+            # the four text-heavy columns (Failure / Summary / Likely cause /
+            # Suggested fix) get the lion's share so multi-line content doesn't
+            # need 5 wraps to render.
+            columnwidth=[80, 130, 70, 130, 220, 220, 220, 110, 220],
             header={
                 "values": [
                     "<b>Test</b>",
@@ -871,9 +875,9 @@ def dq_failure_table() -> go.Figure | None:
                     "<b>Suggested fix</b>",
                 ],
                 "fill_color": "#111827",
-                "font": {"color": "#f9fafb", "size": 12},
+                "font": {"color": "#f9fafb", "size": 13},
                 "align": "left",
-                "height": 30,
+                "height": 36,
             },
             cells={
                 "values": [
@@ -888,15 +892,18 @@ def dq_failure_table() -> go.Figure | None:
                     [_dash(n) for n in df["next_step"]],
                 ],
                 "fill_color": [["#1f2937" if i % 2 else "#111827" for i in range(len(df))]],
-                "font": {"color": "#e5e7eb", "size": 11},
+                "font": {"color": "#e5e7eb", "size": 12},
                 "align": "left",
-                "height": 64,
+                # Tall enough for ~5 wrapped lines of 12px text — the text
+                # columns can hit that on dense LLM explanations. Was 64,
+                # which clipped multi-line content into the next row.
+                "height": 96,
             },
         )
     )
     explained = int((df["summary"].str.strip() != "").sum())
     fig.update_layout(
-        height=max(240, 80 * len(df) + 120),
+        height=max(360, 110 * len(df) + 160),
         margin={"t": 60, "b": 20, "l": 10, "r": 10},
         title=(
             f"Failing DQ checks — {len(df)} total · {explained} explained "
@@ -958,7 +965,10 @@ def dq_recommendations_table() -> go.Figure | None:
 
     fig = go.Figure(
         go.Table(
-            columnwidth=[110, 90, 130, 100, 100, 220],
+            # Rationale gets ~40% of the table — it's the column that holds
+            # multi-sentence LLM output. Was 220 against 530 of header cols
+            # which left 4-line rationales overflowing the cell.
+            columnwidth=[120, 100, 140, 100, 110, 320],
             header={
                 "values": [
                     "<b>Table</b>",
@@ -969,9 +979,9 @@ def dq_recommendations_table() -> go.Figure | None:
                     "<b>Rationale</b>",
                 ],
                 "fill_color": "#111827",
-                "font": {"color": "#f9fafb", "size": 12},
+                "font": {"color": "#f9fafb", "size": 13},
                 "align": "left",
-                "height": 30,
+                "height": 36,
             },
             cells={
                 "values": [
@@ -983,15 +993,18 @@ def dq_recommendations_table() -> go.Figure | None:
                     df["rationale"],
                 ],
                 "fill_color": [row_fill],
-                "font": {"color": "#f9fafb", "size": 11},
+                "font": {"color": "#f9fafb", "size": 12},
                 "align": "left",
-                "height": 56,
+                # Multi-line rationales were bleeding into the next row at
+                # height=56 / size=11. 88 + size=12 fits ~4 wrapped lines
+                # cleanly without forcing every row to a 56px squeeze.
+                "height": 88,
             },
         )
     )
     counts = df["severity"].value_counts().to_dict()
     fig.update_layout(
-        height=max(260, 64 * len(df) + 120),
+        height=max(320, 96 * len(df) + 160),
         margin={"t": 60, "b": 20, "l": 10, "r": 10},
         title=(
             f"DQ recommendation gaps — {len(df)} total · "
