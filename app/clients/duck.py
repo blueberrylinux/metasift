@@ -14,7 +14,6 @@ from loguru import logger
 
 from app.clients.openmetadata import get_http
 
-
 # DuckDB connections are not thread-safe for concurrent `execute()` calls.
 # On a shared `lru_cache`-held connection, `refresh_all()` in the scan
 # executor would hold the internal mutex for the duration of each
@@ -111,7 +110,7 @@ def refresh_all() -> dict[str, int]:
     service_rows = _fetch_services(http)
     _service_cols = ["id", "name", "fqn", "kind", "service_type", "description"]
     services_df = pd.DataFrame(service_rows, columns=_service_cols).astype(
-        {c: "string" for c in _service_cols}
+        dict.fromkeys(_service_cols, "string")
     )
     conn.execute("CREATE OR REPLACE TABLE om_services AS SELECT * FROM services_df")
     counts["om_services"] = len(services_df)

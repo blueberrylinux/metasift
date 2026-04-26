@@ -123,7 +123,7 @@ def main() -> int:
         if name not in ARGS_BY_TOOL:
             continue
         runs = ARGS_BY_TOOL[name]
-        for args, kwargs in runs:
+        for _args, kwargs in runs:
             label = f"{name}({', '.join(f'{k}={v!r}' for k, v in kwargs.items())})"
             t0 = time.perf_counter()
             try:
@@ -140,8 +140,7 @@ def main() -> int:
                     print(f"   {_truncate(text, 300)}")
                 else:
                     looks_iffy = (
-                        "traceback" in text.lower()
-                        or "internal server error" in text.lower()
+                        "traceback" in text.lower() or "internal server error" in text.lower()
                     )
                     tag = "⚠" if looks_iffy else "✓"
                     if looks_iffy:

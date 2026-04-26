@@ -258,9 +258,7 @@ def _record(item: dict[str, Any], *, status: str, after_val: str, reason: str | 
             reason=reason,
         )
     except Exception as e:
-        logger.exception(
-            f"review_actions insert failed for {item['key']} (status={status}): {e}"
-        )
+        logger.exception(f"review_actions insert failed for {item['key']} (status={status}): {e}")
         return -1
 
 

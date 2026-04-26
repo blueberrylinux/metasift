@@ -8,14 +8,14 @@ strings.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     """Stable error codes. Never rename — frontend keys UX off these."""
 
     # Infrastructure

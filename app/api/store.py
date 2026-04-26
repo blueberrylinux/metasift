@@ -15,6 +15,7 @@ DuckDB (in-memory) stays the catalog analytics cache — never mix the two.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -44,6 +45,7 @@ def iso_utc_z() -> str:
     # so we don't accidentally truncate e.g. 59.999 → 59.99.
     now = datetime.now(UTC)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _tls = threading.local()
@@ -138,7 +140,9 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         # Filenames come from our own migrations/ dir; still escape quotes
         # defensively so a rename to a file with `'` can never SQL-inject.
         escaped_name = mig_path.name.replace("'", "''")
-        combined = f"{sql};\nINSERT OR IGNORE INTO _migrations (filename) VALUES ('{escaped_name}');"
+        combined = (
+            f"{sql};\nINSERT OR IGNORE INTO _migrations (filename) VALUES ('{escaped_name}');"
+        )
         conn.executescript(combined)
 
 
@@ -450,10 +454,8 @@ def last_scan(kind: str) -> dict[str, Any] | None:
         return None
     d = dict(row)
     if d.get("counts"):
-        try:
+        with contextlib.suppress(json.JSONDecodeError):
             d["counts"] = json.loads(d["counts"])
-        except json.JSONDecodeError:
-            pass
     return d
 
 
@@ -491,11 +493,7 @@ def scan_is_running(kind: str) -> bool:
 def get_runtime_config(key: str) -> str | None:
     """Read a single override. Returns None when unset — caller is expected
     to fall back to .env / settings."""
-    row = (
-        get_conn()
-        .execute("SELECT value FROM runtime_config WHERE key = ?", (key,))
-        .fetchone()
-    )
+    row = get_conn().execute("SELECT value FROM runtime_config WHERE key = ?", (key,)).fetchone()
     return row[0] if row else None
 
 

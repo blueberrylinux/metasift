@@ -44,6 +44,8 @@ def invalidate_probe_cache(name: str | None = None) -> None:
         _probe_cache.clear()
     else:
         _probe_cache.pop(name, None)
+
+
 # Per-probe lock serializes the refresh path so concurrent missers (e.g.
 # 40 threads hitting /health at the same moment) don't all fire httpx/
 # DuckDB calls in parallel. The first caller computes, the rest wait on
@@ -92,10 +94,13 @@ def duck_ok() -> bool:
     request now that `duck.get_conn()` is thread-local.
     """
     try:
-        row = duck.get_conn().execute(
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_name = 'om_tables'"
-        ).fetchone()
+        row = (
+            duck.get_conn()
+            .execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'om_tables'"
+            )
+            .fetchone()
+        )
         if not row or row[0] == 0:
             return False
         # Table exists — confirm it has rows (refresh actually ran, not

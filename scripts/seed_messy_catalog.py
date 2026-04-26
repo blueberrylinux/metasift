@@ -489,15 +489,11 @@ def seed_dq_test_cases(c: httpx.Client) -> None:
             # rather than refetching, since OM's GET-by-name uses the same
             # schema and we'd just round-trip the same string.
             case_fqn = (
-                f"{table_fqn}.{column}.{spec['name']}"
-                if column
-                else f"{table_fqn}.{spec['name']}"
+                f"{table_fqn}.{column}.{spec['name']}" if column else f"{table_fqn}.{spec['name']}"
             )
             logger.info(f"  ↻ test case exists: {spec['name']}")
         else:
-            logger.warning(
-                f"  ✘ {spec['name']} → {r.status_code}: {r.text[:200]}"
-            )
+            logger.warning(f"  ✘ {spec['name']} → {r.status_code}: {r.text[:200]}")
             continue
 
         result_payload = {
@@ -512,9 +508,7 @@ def seed_dq_test_cases(c: httpx.Client) -> None:
         if r2.status_code in (200, 201):
             logger.info(f"    ✔ result written: {spec['status']}")
         else:
-            logger.warning(
-                f"    ✘ result for {spec['name']} → {r2.status_code}: {r2.text[:200]}"
-            )
+            logger.warning(f"    ✘ result for {spec['name']} → {r2.status_code}: {r2.text[:200]}")
 
 
 def ensure_teams_and_ownership(c: httpx.Client) -> None:

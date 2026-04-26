@@ -191,7 +191,7 @@ def _collect_per_task_overrides() -> dict[str, str]:
     o = llm.get_override()
     if o is None:
         return {}
-    return {k: v for k, v in o.per_task_models}
+    return dict(o.per_task_models)
 
 
 @router.get("/config", response_model=LLMConfigResponse)
@@ -250,9 +250,7 @@ def set_config(req: SetLLMConfigRequest) -> LLMConfigResponse:
     # Shared creds: preserve unspecified fields. Sentinel `None` means
     # "don't change"; empty string "" means "clear".
     new_key = req.api_key if req.api_key is not None else (current.api_key if current else None)
-    new_base = (
-        req.base_url if req.base_url is not None else (current.base_url if current else None)
-    )
+    new_base = req.base_url if req.base_url is not None else (current.base_url if current else None)
     new_model = req.model if req.model is not None else (current.model if current else None)
 
     llm.set_override(api_key=new_key, base_url=new_base, model=new_model)
@@ -267,13 +265,10 @@ def set_config(req: SetLLMConfigRequest) -> LLMConfigResponse:
             llm.set_task_model(task_key, val or None)
 
     chat_router.invalidate_agent()
+    per_task_keys = list((req.per_task_models.model_dump() if req.per_task_models else {}).keys())
     logger.info(
-        "llm config updated · model={!r} base_url={!r} api_key_set={} per_task_keys={}".format(
-            new_model,
-            new_base,
-            bool(new_key),
-            list((req.per_task_models.model_dump() if req.per_task_models else {}).keys()),
-        )
+        f"llm config updated · model={new_model!r} base_url={new_base!r} "
+        f"api_key_set={bool(new_key)} per_task_keys={per_task_keys}"
     )
     return get_config()
 

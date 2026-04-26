@@ -283,8 +283,6 @@ def impact(fqn: str, duck_ok: DuckOk) -> DQImpactResponse:
     # Validate the FQN exists in the cache before computing impact. Without
     # this, a typo'd or hallucinated FQN looks indistinguishable from a real
     # leaf table with no failing tests / no downstream — both return zeros.
-    from app.clients import duck
-
     exists = duck.query(
         "SELECT 1 FROM om_tables WHERE fullyQualifiedName = ?",
         [fqn.strip()],

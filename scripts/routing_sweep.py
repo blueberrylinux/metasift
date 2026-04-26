@@ -16,7 +16,6 @@ import argparse
 import json
 import sys
 import time
-from typing import Optional
 
 import httpx
 
@@ -84,7 +83,7 @@ SWEEP: list[tuple[str, str]] = [
 ]
 
 
-def first_tool_call(host: str, question: str, timeout_s: float = 60.0) -> Optional[str]:
+def first_tool_call(host: str, question: str, timeout_s: float = 60.0) -> str | None:
     """POST /chat/stream and pull the FIRST `tool_call` event's name. Returns
     None if no tool was invoked (agent answered from cache / refused)."""
     url = f"{host.rstrip('/')}/api/v1/chat/stream"
@@ -137,9 +136,7 @@ def main() -> int:
         elapsed = (time.perf_counter() - t0) * 1000
         ok = actual == expected
         sym = "✓" if ok else "✗"
-        print(
-            f"{sym} {expected:32} got={str(actual):28} [{elapsed:5.0f}ms]  q={question[:60]}"
-        )
+        print(f"{sym} {expected:32} got={str(actual):28} [{elapsed:5.0f}ms]  q={question[:60]}")
         if ok:
             pass_count += 1
         else:

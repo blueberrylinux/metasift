@@ -260,9 +260,7 @@ async def dq_explain(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     if not duck_ok:
         raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("dq_explain")
-    return _sse_response(
-        _stream_engine_scan("dq_explain", run_id, cleaning.run_dq_explanations)
-    )
+    return _sse_response(_stream_engine_scan("dq_explain", run_id, cleaning.run_dq_explanations))
 
 
 @router.post("/dq-recommend")

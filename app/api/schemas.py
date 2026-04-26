@@ -372,9 +372,7 @@ class VizFigureResponse(BaseModel):
 # ── /dq ───────────────────────────────────────────────────────────────────
 
 
-FixType = Literal[
-    "schema_change", "etl_investigation", "data_correction", "upstream_fix", "other"
-]
+FixType = Literal["schema_change", "etl_investigation", "data_correction", "upstream_fix", "other"]
 Severity = Literal["critical", "recommended", "nice-to-have"]
 
 
