@@ -246,36 +246,47 @@ a:focus-visible {
 }
 
 /* ── Print styles ──────────────────────────────────────────────────────────
-   When the user hits Cmd/Ctrl+P or the "Print / Save as PDF" button on the
-   Executive Report screen, we strip the dark chrome and reflow the report
-   markdown for paper. The content area is marked with `.print-target` /
-   `.print-target-content`; everything else outside that subtree is hidden.
+   Cmd/Ctrl+P or the "Print / Save as PDF" button on the Executive Report
+   screen captures the report as-is — same dark theme, emerald headers,
+   slate tables, all preserved in the PDF.
 
-   Browser-native print dialogs offer "Save as PDF" as a destination on
-   every modern OS — that's the no-token-cost PDF path. */
+   `print-color-adjust: exact` is the magic incantation that tells the
+   browser "render backgrounds and colors exactly as displayed" instead of
+   stripping them to save ink (browsers default to omitting backgrounds for
+   ink economy). Without this rule the PDF would come out as black text on
+   white, even though the screen shows dark mode.
+
+   The content area is marked with `.print-target` / `.print-target-content`;
+   the chrome (Sidebar / TopBar / PageHeader buttons / scan rail) is hidden
+   so only the report body lands on the page. */
 @media print {
-  /* Reset the page background so dark navy doesn't burn the printer. */
+  /* Force the printer / PDF engine to honour our backgrounds and colors
+     instead of stripping them. Apply to everything inside the print target
+     so nested elements (tables, code blocks) keep their fills too. */
+  html,
+  body,
+  #root,
+  .print-target,
+  .print-target * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Keep the dark navy page background. Match the on-screen body color so
+     margins around the report read as one continuous canvas, not a
+     white-bordered card on a white page. */
   html,
   body,
   #root {
-    background: #fff !important;
-    color: #111 !important;
-    font-family: 'Inter', system-ui, sans-serif;
+    background: #020617 !important;
+    color: #e2e8f0;
     height: auto;
   }
 
-  /* Hide the radial-glow + grid background overlays. */
-  .hero-glow,
-  .grid-bg {
-    background: none !important;
-  }
-
-  /* Hide app chrome — only the report itself prints.
-     Each chrome element gets `display: none`. The matched markup:
-       - <aside>     = Sidebar
-       - .topbar     = TopBar (we add this class via the print target ancestor walk)
-       - PageHeader's parent flex container has chrome we don't want either.
-     Easier path: hide everything not inside `.print-target`. */
+  /* Hide everything outside the report content. visibility:hidden (rather
+     than display:none) preserves the parent's layout box so absolute
+     positioning of `.print-target` below stays predictable. */
   body * {
     visibility: hidden;
   }
@@ -284,8 +295,8 @@ a:focus-visible {
     visibility: visible;
   }
 
-  /* Pin the report to the top-left of the page so flex/sidebar offsets
-     don't push it down or in. */
+  /* Pin the report to the top-left of the page so the (now-hidden)
+     sidebar / topbar offsets don't push it inward. */
   .print-target {
     position: absolute;
     left: 0;
@@ -296,93 +307,38 @@ a:focus-visible {
     margin: 0;
   }
 
-  /* Markdown typography for paper: dark text, slightly smaller, with
-     proper page-break behavior. The ReportMarkdown component sets its
-     own colors via Tailwind dark classes, so override here. */
-  .print-target-content {
-    color: #111;
-    font-size: 11pt;
-    line-height: 1.55;
-  }
+  /* Avoid awkward page breaks inside structured blocks. The dark theme
+     itself is unchanged — colors flow through from the on-screen styles. */
   .print-target-content h1,
   .print-target-content h2,
   .print-target-content h3,
   .print-target-content h4 {
-    color: #000;
     page-break-after: avoid;
   }
-  .print-target-content h1 {
-    font-size: 22pt;
-    margin-top: 0;
-  }
-  .print-target-content h2 {
-    font-size: 16pt;
-    border-bottom: 1px solid #ccc;
-    padding-bottom: 4pt;
-    margin-top: 24pt;
-  }
-  .print-target-content h3 {
-    font-size: 13pt;
-  }
-
-  /* Tables — light borders, no dark fills, allow inner content to wrap. */
-  .print-target-content table {
-    width: 100%;
-    border-collapse: collapse;
+  .print-target-content table,
+  .print-target-content pre,
+  .print-target-content figure {
     page-break-inside: avoid;
-    background: #fff !important;
-    border: 1px solid #ccc;
   }
-  .print-target-content th,
-  .print-target-content td {
-    border: 1px solid #ddd;
-    padding: 6pt 8pt;
-    text-align: left;
-    color: #111 !important;
-    background: #fff !important;
-    font-size: 10pt;
-    word-break: break-word;
-  }
-  .print-target-content th {
-    background: #f3f4f6 !important;
-    font-weight: 600;
-  }
-
-  /* Code blocks — wrap so a long SQL line doesn't get clipped at the
-     page edge. */
   .print-target-content pre,
   .print-target-content code {
-    background: #f6f8fa !important;
-    color: #111 !important;
-    border: 1px solid #ddd;
-    border-radius: 3px;
-    font-size: 9pt;
+    /* So a long SQL line doesn't run off the page edge. */
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .print-target-content pre {
-    padding: 8pt;
-    page-break-inside: avoid;
-  }
-  .print-target-content code {
-    padding: 1pt 4pt;
-  }
 
-  /* Lists — indented, dark dot bullets so they're visible on white. */
-  .print-target-content ul,
-  .print-target-content ol {
-    margin: 6pt 0;
-    padding-left: 22pt;
-  }
-  .print-target-content li {
-    margin: 3pt 0;
-    color: #111 !important;
-  }
-
-  /* Page setup — letter with comfortable margins. The :first page can
-     have a bigger top margin if needed; defaulting to uniform for now. */
+  /* Page setup — letter with no engine margins; we let the body's own
+     padding control whitespace so the dark canvas reaches the page edges
+     instead of being framed by a white border. */
   @page {
     size: letter;
-    margin: 0.75in;
+    margin: 0;
+  }
+
+  /* Compensate for the @page margin: 0 above by giving the report a
+     comfortable inner padding on every printed page. */
+  .print-target {
+    padding: 0.75in !important;
+    box-sizing: border-box;
   }
 }
