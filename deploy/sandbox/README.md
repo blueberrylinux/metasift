@@ -56,22 +56,39 @@ is issued — those rewrites mid-issuance can break the HTTP-01 callback.
 
 ## Phase 3.1 — VPS bootstrap (run as root, once)
 
-SSH in as `root` (or as the cloud-init user with `sudo -i`):
+SSH in and become root if you aren't already:
 
 ```bash
-adduser --system --group --shell /bin/bash --home /opt/metasift metasift
+sudo -i      # if you SSH'd in as a non-root sudo user (e.g. `hero`)
+```
+
+Then, in order — clone FIRST, create the user SECOND, chown LAST. Order
+matters: if `adduser` runs before the clone with `--home /opt/metasift`,
+it creates an empty `/opt/metasift` directory and the subsequent
+`git clone` refuses to write into a non-empty target.
+
+```bash
 apt update
 # Note: no python3.X-venv — uv (installed below) auto-fetches Python 3.11
 # from python-build-standalone, no apt package needed.
 apt install -y docker.io docker-compose-plugin make git ufw fail2ban curl
 systemctl enable --now docker
 
+# Clone the repo BEFORE creating the metasift user.
+git clone --branch sandbox-mode https://github.com/blueberrylinux/metasift.git /opt/metasift
+
+# Create the service user using /opt/metasift as its home.
+# adduser does NOT touch ownership of an already-existing dir, so the clone
+# is safe; we set ownership explicitly with chown next.
+adduser --system --group --shell /bin/bash --home /opt/metasift metasift
+chown -R metasift:metasift /opt/metasift
+
 # Firewall — only SSH + HTTP + HTTPS exposed.
 ufw default deny incoming
 ufw allow ssh
 ufw allow 80
 ufw allow 443
-ufw enable
+ufw --force enable
 
 # SSH hardening — key-only, no passwords. Do this AFTER you've confirmed
 # you can log in with your key, otherwise you'll lock yourself out.
@@ -81,10 +98,6 @@ systemctl restart ssh
 # fail2ban for SSH only — no web jail (Caddy rate-limit handles that;
 # false positives on a public demo are bad UX).
 systemctl enable --now fail2ban
-
-# Clone + chown
-cd /opt && git clone --branch sandbox-mode https://github.com/blueberrylinux/metasift.git
-chown -R metasift:metasift /opt/metasift
 ```
 
 Install Node 20 (still as root — the `metasift` user has narrow sudo and
