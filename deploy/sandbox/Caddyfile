@@ -10,15 +10,13 @@
 # rate_limit blocks and either let the API self-rate-limit or fall back
 # to NGINX with `limit_req_zone`.
 #
-# Why the global `order` block: caddy-ratelimit is a third-party directive,
-# and Caddy has no built-in ordering for it. Without an explicit order it
-# runs at an unpredictable point in the request pipeline (often AFTER
-# reverse_proxy, which defeats the purpose). Pinning it before basicauth
-# puts it early in the auth/limiting phase where it belongs.
-
-{
-	order rate_limit before basicauth
-}
+# No global `order` block needed: per the caddy-ratelimit README, the
+# plugin self-registers before `basic_auth` in the directive order on
+# load. An explicit `{ order rate_limit before basic_auth }` would be
+# redundant; an explicit `{ order rate_limit before basicauth }` (no
+# underscore) is what we shipped before the validate-on-VPS pass — Caddy
+# treats `basicauth` as an unknown directive and fails validation.
+# Leaving this empty is the documented happy path.
 
 # ── PROD: sandbox.metasift.org ──────────────────────────────────────────────
 sandbox.metasift.org {
