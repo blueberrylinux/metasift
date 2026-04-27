@@ -42,6 +42,11 @@ class ErrorCode(StrEnum):
     # Catch-all — avoid if possible
     INTERNAL_ERROR = "internal_error"
 
+    # Sandbox public-demo gates (only emitted when SANDBOX_MODE=1)
+    SANDBOX_READ_ONLY = "sandbox_read_only"
+    BYO_KEY_REQUIRED = "byo_key_required"
+    BYO_KEY_INVALID = "byo_key_invalid"
+
 
 class ErrorShape(BaseModel):
     """Standard JSON shape for every non-2xx response."""
@@ -117,4 +122,27 @@ def om_unreachable() -> ApiError:
         ErrorCode.OM_UNREACHABLE,
         "OpenMetadata is not reachable. Start the stack with `make stack-up`.",
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
+def sandbox_read_only() -> ApiError:
+    """Mutating endpoints in sandbox mode return this. The React app keys
+    off `code` to render the read-only callout instead of a generic toast."""
+    return ApiError(
+        ErrorCode.SANDBOX_READ_ONLY,
+        "This is a public read-only sandbox. Click 'Open in GitHub' to clone "
+        "and run locally with full write access.",
+        status_code=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def byo_key_required() -> ApiError:
+    """402 Payment Required — semantically correct for "you owe an API key
+    to use this". The React app traps this on /chat/stream to open the
+    BYO-key modal."""
+    return ApiError(
+        ErrorCode.BYO_KEY_REQUIRED,
+        "This sandbox is BYOK. Get a free OpenRouter key at "
+        "https://openrouter.ai/keys and paste it on first chat.",
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
     )

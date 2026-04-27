@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -84,6 +84,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── BYO-key middleware ────────────────────────────────────────────────────
+#
+# Pull `X-OpenRouter-Key` off every incoming request and bind it to the
+# `app.clients.llm.request_api_key` ContextVar for the duration of the
+# request task. Endpoints that build an LLM client (chat, scans) read the
+# var via `get_llm()` and pick up the visitor's key automatically.
+#
+# Always-on: outside sandbox mode, callers normally don't send the header
+# and the var stays None — `_build()` falls through to `.env` defaults
+# unchanged. Sending the header in non-sandbox is also fine; it just
+# overrides the .env key for that one request.
+@app.middleware("http")
+async def bind_request_api_key(request: Request, call_next):
+    from app.clients.llm import request_api_key
+
+    key = request.headers.get("x-openrouter-key")
+    token = request_api_key.set(key) if key else None
+    try:
+        return await call_next(request)
+    finally:
+        if token is not None:
+            request_api_key.reset(token)
 
 app.include_router(health.router, prefix=PREFIX)
 app.include_router(analysis.router, prefix=PREFIX)

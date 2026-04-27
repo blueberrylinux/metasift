@@ -25,7 +25,7 @@ from fastapi import APIRouter
 from loguru import logger
 
 from app.api import errors, store
-from app.api.deps import invalidate_probe_cache
+from app.api.deps import WritesEnabled, invalidate_probe_cache
 from app.api.schemas import OMConfigRequest, OMConfigResponse
 from app.clients import openmetadata as om_client
 from app.config import settings
@@ -121,7 +121,7 @@ def get_om_config() -> OMConfigResponse:
 
 
 @router.post("/config", response_model=OMConfigResponse)
-def set_om_config(req: OMConfigRequest) -> OMConfigResponse:
+def set_om_config(req: OMConfigRequest, _: WritesEnabled) -> OMConfigResponse:
     """Validate credentials against OM, then persist + hot-swap clients.
     Validation runs FIRST: a failed token doesn't get written, so a typo
     can't lock the user out of the UI by overriding their working `.env`."""
@@ -137,7 +137,7 @@ def set_om_config(req: OMConfigRequest) -> OMConfigResponse:
 
 
 @router.delete("/config", response_model=OMConfigResponse)
-def reset_om_config() -> OMConfigResponse:
+def reset_om_config(_: WritesEnabled) -> OMConfigResponse:
     """Drop the SQLite override and fall back to `.env`. Useful when the
     UI-saved creds are wrong and you want to re-bootstrap from `.env`
     without touching the database file."""

@@ -34,6 +34,7 @@ from langchain_openai import ChatOpenAI
 from loguru import logger
 
 from app.api import errors
+from app.api.deps import WritesEnabled
 from app.api.routers import chat as chat_router
 from app.api.schemas import (
     LLMCatalogResponse,
@@ -143,7 +144,7 @@ def get_catalog() -> LLMCatalogResponse:
 
 
 @router.post("/model", response_model=ModelConfig)
-def set_model(req: SetModelRequest) -> ModelConfig:
+def set_model(req: SetModelRequest, _: WritesEnabled) -> ModelConfig:
     """Switch the active model. Clears the get_llm() lru_cache via
     `llm.set_model` (preserves api_key / base_url / per-task overrides) AND
     drops the cached agent so the next /chat/stream call rebuilds with the
@@ -229,7 +230,7 @@ def get_config() -> LLMConfigResponse:
 
 
 @router.post("/config", response_model=LLMConfigResponse)
-def set_config(req: SetLLMConfigRequest) -> LLMConfigResponse:
+def set_config(req: SetLLMConfigRequest, _: WritesEnabled) -> LLMConfigResponse:
     """Apply a full override. Each top-level field is optional — omit to
     keep the current value for that field.
 
@@ -274,7 +275,7 @@ def set_config(req: SetLLMConfigRequest) -> LLMConfigResponse:
 
 
 @router.delete("/config", response_model=LLMConfigResponse)
-def reset_config() -> LLMConfigResponse:
+def reset_config(_: WritesEnabled) -> LLMConfigResponse:
     """Wipe the session override; subsequent calls fall back to `.env`."""
     llm.clear_override()
     chat_router.invalidate_agent()

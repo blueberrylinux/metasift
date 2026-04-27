@@ -21,6 +21,10 @@ class HealthResponse(BaseModel):
     duck: bool
     sqlite: bool
     version: str
+    # True when the FastAPI process was started with SANDBOX_MODE=1 — the
+    # React app reads this on boot to render the read-only banner, hide
+    # accept/reject buttons, and surface the BYO-key modal on first chat.
+    sandbox: bool = False
 
 
 # ── /analysis ─────────────────────────────────────────────────────────────────

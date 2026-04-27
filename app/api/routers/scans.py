@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -36,7 +37,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import errors, store
-from app.api.deps import DuckOk, OmOk
+from app.api.deps import DuckOk, OmOk, WritesEnabled
 from app.api.schemas import (
     BulkDocRequest,
     ScanRun,
@@ -88,6 +89,7 @@ async def _stream_engine_scan(
     run_fn: Callable[..., dict[str, Any]],
     *,
     accepts_progress: bool = True,
+    ctx: contextvars.Context | None = None,
     **kwargs: Any,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run a sync engine function in a worker thread and yield `progress`,
@@ -175,7 +177,19 @@ async def _stream_engine_scan(
         finally:
             emit(None)
 
-    loop.run_in_executor(_SCAN_EXECUTOR, runner)
+    # Carry contextvars (notably app.clients.llm.request_api_key for sandbox
+    # BYOK) into the worker thread so engine LLM calls pick up the visitor's
+    # OpenRouter key. The caller MUST capture the snapshot synchronously in
+    # the route handler — by the time this generator's body starts running
+    # (first anext() from the SSE consumer) the BYO-key middleware has
+    # already reset the request's ContextVar in its finally block. See
+    # chat.py::stream_agent_events for the same constraint.
+    if ctx is None:
+        raise RuntimeError(
+            "_stream_engine_scan requires `ctx=contextvars.copy_context()` "
+            "captured by the calling route handler — see deep_scan / refresh / etc."
+        )
+    loop.run_in_executor(_SCAN_EXECUTOR, ctx.run, runner)
     deadline = loop.time() + _SCAN_WATCHDOG_S
     try:
         while True:
@@ -225,6 +239,14 @@ def _sse_response(events_coro: AsyncIterator[dict[str, Any]]) -> EventSourceResp
 # ── Routes ────────────────────────────────────────────────────────────────
 
 
+def _capture_ctx() -> contextvars.Context:
+    """Snapshot the caller's contextvars BEFORE the SSE response object is
+    returned. Must be called synchronously in the route handler — once the
+    BYO-key middleware's finally has fired, the snapshot will be empty.
+    See `_stream_engine_scan` for the consumer."""
+    return contextvars.copy_context()
+
+
 @router.post("/deep-scan")
 async def deep_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     """Stale-description + quality-scoring pass. LLM-heavy — typically 30-60s
@@ -234,7 +256,10 @@ async def deep_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     if not duck_ok:
         raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("deep_scan")
-    return _sse_response(_stream_engine_scan("deep_scan", run_id, cleaning.run_deep_scan))
+    ctx = _capture_ctx()
+    return _sse_response(
+        _stream_engine_scan("deep_scan", run_id, cleaning.run_deep_scan, ctx=ctx)
+    )
 
 
 @router.post("/pii-scan")
@@ -246,8 +271,11 @@ async def pii_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     if not duck_ok:
         raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("pii_scan")
+    ctx = _capture_ctx()
     return _sse_response(
-        _stream_engine_scan("pii_scan", run_id, cleaning.run_pii_scan, accepts_progress=False)
+        _stream_engine_scan(
+            "pii_scan", run_id, cleaning.run_pii_scan, accepts_progress=False, ctx=ctx
+        )
     )
 
 
@@ -260,7 +288,10 @@ async def dq_explain(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     if not duck_ok:
         raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("dq_explain")
-    return _sse_response(_stream_engine_scan("dq_explain", run_id, cleaning.run_dq_explanations))
+    ctx = _capture_ctx()
+    return _sse_response(
+        _stream_engine_scan("dq_explain", run_id, cleaning.run_dq_explanations, ctx=ctx)
+    )
 
 
 @router.post("/dq-recommend")
@@ -272,8 +303,9 @@ async def dq_recommend(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
     if not duck_ok:
         raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("dq_recommend")
+    ctx = _capture_ctx()
     return _sse_response(
-        _stream_engine_scan("dq_recommend", run_id, stewardship.run_dq_recommendations)
+        _stream_engine_scan("dq_recommend", run_id, stewardship.run_dq_recommendations, ctx=ctx)
     )
 
 
@@ -287,6 +319,7 @@ async def bulk_doc(req: BulkDocRequest, om_ok: OmOk, duck_ok: DuckOk) -> EventSo
     if not duck_ok:
         raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("bulk_doc")
+    ctx = _capture_ctx()
     return _sse_response(
         _stream_engine_scan(
             "bulk_doc",
@@ -294,12 +327,13 @@ async def bulk_doc(req: BulkDocRequest, om_ok: OmOk, duck_ok: DuckOk) -> EventSo
             stewardship.bulk_document_schema,
             schema_name=req.schema_name,
             max_tables=req.max_tables,
+            ctx=ctx,
         )
     )
 
 
 @router.post("/refresh")
-async def refresh(om_ok: OmOk) -> EventSourceResponse:
+async def refresh(om_ok: OmOk, _: WritesEnabled) -> EventSourceResponse:
     """Pull fresh metadata into DuckDB. Short (~1s on the demo catalog). No
     progress_cb in the engine, so the stream is just `done` or `error` — the
     SSE wrapper still lets the UI share the same scan-state plumbing as the
@@ -307,8 +341,11 @@ async def refresh(om_ok: OmOk) -> EventSourceResponse:
     if not om_ok:
         raise errors.om_unreachable()
     run_id = _claim_run_slot("refresh")
+    ctx = _capture_ctx()
     return _sse_response(
-        _stream_engine_scan("refresh", run_id, duck.refresh_all, accepts_progress=False)
+        _stream_engine_scan(
+            "refresh", run_id, duck.refresh_all, accepts_progress=False, ctx=ctx
+        )
     )
 
 

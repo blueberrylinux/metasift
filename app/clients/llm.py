@@ -13,6 +13,7 @@ works: OpenRouter, OpenAI, Gemini, Groq, Ollama, etc.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
@@ -51,6 +52,23 @@ class LLMOverride:
 # is the intended runtime, and Python's GIL makes a pointer swap atomic
 # enough for the one-writer / many-readers pattern here.
 _override: LLMOverride | None = None
+
+
+# Per-request OpenRouter key for sandbox / BYO-key mode. Set by the
+# `X-OpenRouter-Key` middleware in `app/api/main.py` on every incoming
+# request that carries the header; read by `_build` below as the highest-
+# priority credential source.
+#
+# ContextVar (not threading.local) because FastAPI requests run as asyncio
+# tasks and contextvars propagate task-by-task. The chat/scan workers run
+# the sync agent loop inside `_CHAT_EXECUTOR` / `_SCAN_EXECUTOR`; the
+# dispatch sites must use `contextvars.copy_context()` + `ctx.run(fn)` to
+# carry the value into the worker thread (see chat.py / scans.py).
+#
+# Default None means "no per-request key" — `_build` falls through to the
+# legacy `_override.api_key` / `settings.openrouter_api_key` resolution
+# unchanged. Local dev / non-sandbox installs see no behaviour change.
+request_api_key: ContextVar[str | None] = ContextVar("openrouter_request_key", default=None)
 
 
 def _clean(v: str | None) -> str | None:
@@ -156,13 +174,22 @@ def get_override() -> LLMOverride | None:
 
 def _build(task: TaskType, env_default_model: str) -> BaseChatModel:
     """Construct a ChatOpenAI client — merges the runtime override with .env
-    defaults, per field. Resolution precedence for the model:
-        per_task_models[task]  →  override.model (shared)  →  env_default_model
+    defaults, per field. Resolution precedence for the api_key:
+        request_api_key (sandbox BYOK) → override.api_key → settings.openrouter_api_key
+    For the model:
+        per_task_models[task] → override.model (shared) → env_default_model
 
     Callers get override values where set and .env defaults where not.
-    Raises if NO api_key is available from either source."""
+    Raises if NO api_key is available from any source.
+
+    The lru_cache on `get_llm` is *not* keyed on the request_api_key — its
+    side-effect of returning a fresh ChatOpenAI is cheap, but if two
+    sandbox visitors with different keys hit the same cached client they'd
+    cross-leak credentials. `get_llm` is bypassed in sandbox mode below;
+    we build a fresh client per call."""
     o = _override
-    api_key = o.api_key if o and o.api_key else settings.openrouter_api_key
+    request_key = request_api_key.get()
+    api_key = request_key or (o.api_key if o and o.api_key else settings.openrouter_api_key)
     base_url = o.base_url if o and o.base_url else settings.openrouter_base_url
 
     model = env_default_model
@@ -199,6 +226,10 @@ _TASK_MAP = {
 
 
 @lru_cache(maxsize=8)
+def _get_llm_cached(task: TaskType) -> BaseChatModel:
+    return _build(task, _TASK_MAP[task]())
+
+
 def get_llm(task: TaskType = "toolcall") -> BaseChatModel:
     """Return a configured chat model for a given task type.
 
@@ -206,5 +237,18 @@ def get_llm(task: TaskType = "toolcall") -> BaseChatModel:
     `set_override()` / `set_model()` / `set_task_model()` / `clear_override()`
     so credential changes take effect on the next call without a process
     restart.
-    """
-    return _build(task, _TASK_MAP[task]())
+
+    BYO-key bypass: if a per-request key is set on the contextvar, build a
+    fresh client without consulting the cache — otherwise visitor A's first
+    request would warm a cache that visitor B then reads, leaking key A's
+    creds into key B's calls. The fresh build is cheap (ChatOpenAI is just
+    config + an httpx pool); the cache stays useful for non-sandbox runs."""
+    if request_api_key.get() is not None:
+        return _build(task, _TASK_MAP[task]())
+    return _get_llm_cached(task)
+
+
+# Preserve cache_clear() compat — set_override() / clear_override() / etc.
+# still call get_llm.cache_clear() to invalidate after a credentials update.
+# Forward to the underlying lru_cache.
+get_llm.cache_clear = _get_llm_cached.cache_clear  # type: ignore[attr-defined]

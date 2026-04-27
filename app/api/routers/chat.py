@@ -21,6 +21,7 @@ Reference for the stream demux: `app/main.py::1431-1488` (Streamlit sync).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import re
 import threading
@@ -131,6 +132,8 @@ def _history_to_lc(history: list[ChatMessage] | None) -> list[Any]:
 async def stream_agent_events(
     question: str,
     history: list[ChatMessage] | None,
+    *,
+    ctx: contextvars.Context | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run the agent in a worker thread and yield SSE frames as asyncio events.
 
@@ -228,7 +231,20 @@ async def stream_agent_events(
         finally:
             emit(None)  # sentinel
 
-    loop.run_in_executor(_CHAT_EXECUTOR, run)
+    # Carry contextvars (notably app.clients.llm.request_api_key for sandbox
+    # BYOK) into the worker thread. The caller MUST capture the context
+    # snapshot synchronously in the route handler — by the time this async
+    # generator's body executes (on first anext() during SSE streaming),
+    # the BYO-key middleware has already reset the request's ContextVar in
+    # its finally block. A fallback `copy_context()` here is intentionally
+    # not provided: silent fallthrough to .env creds is the failure mode
+    # we're trying to prevent in sandbox mode.
+    if ctx is None:
+        raise RuntimeError(
+            "stream_agent_events requires `ctx=contextvars.copy_context()` "
+            "captured by the calling route handler — see chat_stream for the pattern."
+        )
+    loop.run_in_executor(_CHAT_EXECUTOR, ctx.run, run)
 
     try:
         deadline = loop.time() + _CHAT_WATCHDOG_S
@@ -370,6 +386,24 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
     Errors after streaming has begun arrive as an `error` frame (status 200 —
     can't change HTTP status mid-stream).
     """
+    # Sandbox public-demo gate: BYOK only — no shared/fallback OpenRouter key.
+    # The bind_request_api_key middleware (app/api/main.py) sets this from
+    # the X-OpenRouter-Key header. Missing here means the visitor hasn't
+    # pasted a key yet — 402 surfaces the BYO-key modal in the React app.
+    # Pre-stream check so the client gets a real HTTP status (can't 4xx
+    # mid-SSE).
+    from app.clients.llm import request_api_key
+
+    if api_settings.sandbox_mode and request_api_key.get() is None:
+        raise errors.byo_key_required()
+
+    # Snapshot the contextvars NOW — synchronously, while the middleware's
+    # try block still has request_api_key set. By the time the SSE body
+    # generator starts producing frames, the middleware's `finally` has
+    # already reset the var. The snapshot preserves the value across that
+    # boundary so the worker thread (chat_executor) sees the visitor's key.
+    ctx = contextvars.copy_context()
+
     if req.conversation_id is not None:
         history = _history_from_store(req.conversation_id)
     else:
@@ -388,7 +422,7 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
         final_ev: dict[str, Any] | None = None
         errored = False
 
-        async for ev in stream_agent_events(question, history):
+        async for ev in stream_agent_events(question, history, ctx=ctx):
             etype = ev["type"]
             if etype == "tool_call":
                 calls_by_id[ev["id"]] = {"name": ev["name"], "args": ev["args"]}

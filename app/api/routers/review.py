@@ -38,7 +38,7 @@ from fastapi import APIRouter
 from loguru import logger
 
 from app.api import errors, store
-from app.api.deps import DuckOk
+from app.api.deps import DuckOk, WritesEnabled
 from app.api.schemas import (
     AcceptEditedRequest,
     ReviewAcceptResponse,
@@ -263,7 +263,7 @@ def _record(item: dict[str, Any], *, status: str, after_val: str, reason: str | 
 
 
 @router.post("/{item_id}/accept", response_model=ReviewAcceptResponse)
-def accept(item_id: str) -> ReviewAcceptResponse:
+def accept(item_id: str, _: WritesEnabled) -> ReviewAcceptResponse:
     """Apply the suggestion verbatim. Dispatches on item.kind:
     description → apply_suggestion, pii_tag → apply_pii_tag."""
     _validate_key(item_id)
@@ -278,7 +278,9 @@ def accept(item_id: str) -> ReviewAcceptResponse:
 
 
 @router.post("/{item_id}/accept-edited", response_model=ReviewAcceptResponse)
-def accept_edited(item_id: str, req: AcceptEditedRequest) -> ReviewAcceptResponse:
+def accept_edited(
+    item_id: str, req: AcceptEditedRequest, _: WritesEnabled
+) -> ReviewAcceptResponse:
     """Apply with a user-edited value. For descriptions the textarea content,
     for pii_tag one of PII.Sensitive / PII.NonSensitive / PII.None."""
     _validate_key(item_id)
@@ -299,7 +301,7 @@ def accept_edited(item_id: str, req: AcceptEditedRequest) -> ReviewAcceptRespons
 
 
 @router.post("/{item_id}/reject", response_model=ReviewAcceptResponse)
-def reject(item_id: str) -> ReviewAcceptResponse:
+def reject(item_id: str, _: WritesEnabled) -> ReviewAcceptResponse:
     """Dismiss without applying. Persistent — won't resurface on subsequent
     /review calls unless review_actions is cleared (no UX for that yet)."""
     _validate_key(item_id)

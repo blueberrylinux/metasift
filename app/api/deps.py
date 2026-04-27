@@ -149,3 +149,24 @@ DuckOk = Annotated[bool, Depends(duck_ok)]
 OmOk = Annotated[bool, Depends(om_ok)]
 LlmOk = Annotated[bool, Depends(llm_ok)]
 SqliteOk = Annotated[bool, Depends(sqlite_ok)]
+
+
+# ── Sandbox gates ──────────────────────────────────────────────────────────
+
+
+def require_writes_enabled() -> None:
+    """Raise 403 sandbox_read_only when the API was started with
+    SANDBOX_MODE=1. Apply via `Depends(require_writes_enabled)` on every
+    endpoint that mutates OpenMetadata, SQLite runtime config, or fires a
+    write-capable scan. No-op outside sandbox mode — local dev / self-hosted
+    installs are unaffected."""
+    from app.api import errors
+    from app.api.config import api_settings
+
+    if api_settings.sandbox_mode:
+        raise errors.sandbox_read_only()
+
+
+# Use as `_: WritesEnabled` in route signatures — name doesn't matter, the
+# dependency runs for its side effect (raising 403).
+WritesEnabled = Annotated[None, Depends(require_writes_enabled)]

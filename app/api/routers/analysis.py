@@ -24,7 +24,7 @@ from fastapi import APIRouter
 from loguru import logger
 
 from app.api import errors, store
-from app.api.deps import DuckOk
+from app.api.deps import DuckOk, WritesEnabled
 from app.api.schemas import (
     CompositeScore,
     CoverageResponse,
@@ -91,7 +91,7 @@ def get_data_sources(duck_ok: DuckOk) -> DataSourcesResponse:
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh() -> RefreshResponse:
+async def refresh(_: WritesEnabled) -> RefreshResponse:
     """Pull fresh metadata from OpenMetadata into DuckDB. Blocks until done
     (typically 30s-2min depending on catalog size). Logs a `scan_runs` row
     so the sidebar's 'last scan N min ago' badge can pick it up.

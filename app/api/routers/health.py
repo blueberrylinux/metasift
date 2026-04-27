@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.api.config import api_settings
 from app.api.deps import DuckOk, LlmOk, OmOk, SqliteOk
 from app.api.schemas import HealthResponse
 
@@ -32,10 +33,14 @@ def health(
     down.
     """
     return HealthResponse(
-        ok=all([om, llm, sqlite]),  # duck is fine-to-be-empty before first refresh
+        # In sandbox mode, the LLM credential probe is meaningless — visitors
+        # bring their own OpenRouter key per request. Don't let "no .env key"
+        # paint the sidebar red.
+        ok=all([om, sqlite]) if api_settings.sandbox_mode else all([om, llm, sqlite]),
         om=om,
         llm=llm,
         duck=duck,
         sqlite=sqlite,
         version=_VERSION,
+        sandbox=api_settings.sandbox_mode,
     )

@@ -63,6 +63,20 @@ class ApiSettings(BaseSettings):
         description="Only one long-running scan at a time in single-worker mode.",
     )
 
+    # Sandbox public-demo mode. When True:
+    #   * mutating endpoints (review accept/reject, om/llm/config writes,
+    #     scans/refresh) return 403 sandbox_read_only.
+    #   * /chat/stream requires an X-OpenRouter-Key header (BYOK only —
+    #     no shared/fallback key) and 402s without one.
+    #   * /health includes `sandbox: true` so the React app can render the
+    #     read-only banner + BYOK modal.
+    #   * /chat/conversations is filtered to the caller's session cookie so
+    #     visitors can't read each other's chats on a shared deployment.
+    sandbox_mode: bool = Field(
+        default=False,
+        description="Read-only public demo mode (BYOK, no fallback key).",
+    )
+
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
