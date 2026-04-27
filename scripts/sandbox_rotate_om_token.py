@@ -38,6 +38,7 @@ only ever sent to OM (for validation) and written to `.env`.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
@@ -98,8 +99,7 @@ def _validate_token(host: str, jwt: str) -> None:
         )
     if r.status_code != 200:
         raise SystemExit(
-            f"✗ OpenMetadata returned HTTP {r.status_code}. "
-            "Check the host + token and retry."
+            f"✗ OpenMetadata returned HTTP {r.status_code}. Check the host + token and retry."
         )
 
 
@@ -109,9 +109,7 @@ def _rewrite_env(env_path: Path, new_token: str) -> None:
     that weren't present, write to a temp file in the same directory,
     fsync, then rename into place. Same-directory tempfile guarantees the
     rename is atomic on POSIX (no cross-device move)."""
-    existing_lines: list[str] = (
-        env_path.read_text().splitlines() if env_path.exists() else []
-    )
+    existing_lines: list[str] = env_path.read_text().splitlines() if env_path.exists() else []
     seen: set[str] = set()
     out_lines: list[str] = []
     for raw in existing_lines:
@@ -140,10 +138,8 @@ def _rewrite_env(env_path: Path, new_token: str) -> None:
         os.replace(tmp_path, env_path)
     except Exception:
         # Best-effort cleanup if we crashed before the rename.
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_path)
-        except FileNotFoundError:
-            pass
         raise
 
 
@@ -164,9 +160,7 @@ def _restart_api(service: str) -> None:
             f"✗ `sudo` or systemctl not found ({e}). Run on the VPS, not in dev."
         ) from e
     except subprocess.CalledProcessError as e:
-        raise SystemExit(
-            f"✗ `systemctl restart {service}` failed: {e.stderr.strip() or e}"
-        ) from e
+        raise SystemExit(f"✗ `systemctl restart {service}` failed: {e.stderr.strip() or e}") from e
 
 
 def main() -> int:

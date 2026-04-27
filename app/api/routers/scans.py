@@ -37,7 +37,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import errors, store
-from app.api.deps import DuckOk, OmOk, WritesEnabled
+from app.api.deps import DuckOk, OmOk
 from app.api.schemas import (
     ActiveScanResponse,
     BulkDocRequest,
@@ -258,9 +258,7 @@ async def deep_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
         raise errors.no_metadata_loaded()
     run_id = _claim_run_slot("deep_scan")
     ctx = _capture_ctx()
-    return _sse_response(
-        _stream_engine_scan("deep_scan", run_id, cleaning.run_deep_scan, ctx=ctx)
-    )
+    return _sse_response(_stream_engine_scan("deep_scan", run_id, cleaning.run_deep_scan, ctx=ctx))
 
 
 @router.post("/pii-scan")
@@ -334,7 +332,7 @@ async def bulk_doc(req: BulkDocRequest, om_ok: OmOk, duck_ok: DuckOk) -> EventSo
 
 
 @router.post("/refresh")
-async def refresh(om_ok: OmOk, _: WritesEnabled) -> EventSourceResponse:
+async def refresh(om_ok: OmOk) -> EventSourceResponse:
     """Pull fresh metadata into DuckDB. Short (~1s on the demo catalog). No
     progress_cb in the engine, so the stream is just `done` or `error` — the
     SSE wrapper still lets the UI share the same scan-state plumbing as the
@@ -344,9 +342,7 @@ async def refresh(om_ok: OmOk, _: WritesEnabled) -> EventSourceResponse:
     run_id = _claim_run_slot("refresh")
     ctx = _capture_ctx()
     return _sse_response(
-        _stream_engine_scan(
-            "refresh", run_id, duck.refresh_all, accepts_progress=False, ctx=ctx
-        )
+        _stream_engine_scan("refresh", run_id, duck.refresh_all, accepts_progress=False, ctx=ctx)
     )
 
 

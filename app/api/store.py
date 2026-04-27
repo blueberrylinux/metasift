@@ -202,9 +202,7 @@ def delete_conversation(convo_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def list_conversations(
-    limit: int = 50, *, session_id: str | None = None
-) -> list[dict[str, Any]]:
+def list_conversations(limit: int = 50, *, session_id: str | None = None) -> list[dict[str, Any]]:
     """Most recent conversations first.
 
     `session_id`: when provided, returns only rows tagged with that session

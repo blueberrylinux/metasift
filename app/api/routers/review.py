@@ -278,9 +278,7 @@ def accept(item_id: str, _: WritesEnabled) -> ReviewAcceptResponse:
 
 
 @router.post("/{item_id}/accept-edited", response_model=ReviewAcceptResponse)
-def accept_edited(
-    item_id: str, req: AcceptEditedRequest, _: WritesEnabled
-) -> ReviewAcceptResponse:
+def accept_edited(item_id: str, req: AcceptEditedRequest, _: WritesEnabled) -> ReviewAcceptResponse:
     """Apply with a user-edited value. For descriptions the textarea content,
     for pii_tag one of PII.Sensitive / PII.NonSensitive / PII.None."""
     _validate_key(item_id)

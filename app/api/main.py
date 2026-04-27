@@ -174,9 +174,39 @@ app.include_router(om.router, prefix=PREFIX)
 if api_settings.serve_static:
     from pathlib import Path
 
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    class SPAStaticFiles(StaticFiles):
+        """StaticFiles + client-side-route fallback. React Router uses
+        /chat, /scans, /review, etc. — none of which exist as files in
+        web/dist/. Without this fallback, direct navigation or browser
+        refresh on those paths returns 404 (server-side route doesn't
+        exist) instead of serving the SPA shell so the client router
+        can take over.
+
+        The fallback only fires for paths that AREN'T API routes or
+        FastAPI's introspection endpoints — otherwise a malformed API
+        call would silently get an HTML 200 with the SPA shell instead
+        of a JSON 4xx. The path arg here has the leading slash stripped
+        by the StaticFiles framing, so the comparisons are bare-prefix.
+        """
+
+        async def get_response(self, path, scope):
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as e:
+                if e.status_code == 404 and not (
+                    path.startswith("api/")
+                    or path.startswith("docs")
+                    or path.startswith("openapi")
+                    or path.startswith("redoc")
+                ):
+                    return await super().get_response("index.html", scope)
+                raise
+
     dist_path = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
     if dist_path.exists():
-        app.mount("/", StaticFiles(directory=str(dist_path), html=True), name="web")
+        app.mount("/", SPAStaticFiles(directory=str(dist_path), html=True), name="web")
         logger.info(f"Serving static bundle from {dist_path}")
     else:
         logger.warning(

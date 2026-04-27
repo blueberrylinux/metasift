@@ -291,9 +291,7 @@ def _session_filter(request: Request) -> str | None:
 
 
 @router.post("/conversations", response_model=ConversationSummary, status_code=201)
-def create_conversation(
-    req: CreateConversationRequest, request: Request
-) -> ConversationSummary:
+def create_conversation(req: CreateConversationRequest, request: Request) -> ConversationSummary:
     """Start a new conversation. Empty by default — first message comes via
     /chat/stream with this id. Tagged with the visitor's session_id so the
     conversation list filter (sandbox) can scope it correctly."""
@@ -325,14 +323,10 @@ def list_conversations(request: Request, limit: int = 50) -> ConversationListRes
     "/conversations/{conversation_id}",
     response_model=ConversationDetailResponse,
 )
-def get_conversation(
-    conversation_id: str, request: Request
-) -> ConversationDetailResponse:
+def get_conversation(conversation_id: str, request: Request) -> ConversationDetailResponse:
     """Full transcript for a conversation, tool traces included.
     In sandbox mode, 404s if the conversation belongs to another session."""
-    if not store.conversation_visible_to(
-        conversation_id, session_id=_session_filter(request)
-    ):
+    if not store.conversation_visible_to(conversation_id, session_id=_session_filter(request)):
         raise errors.conversation_not_found(conversation_id)
     detail = store.get_conversation(conversation_id)
     if detail is None:
@@ -353,9 +347,7 @@ def rename_conversation(
     """Rename a conversation. An empty / whitespace-only title becomes NULL
     so the list falls back to the 'Untitled conversation' placeholder.
     In sandbox mode, 404s if the conversation belongs to another session."""
-    if not store.conversation_visible_to(
-        conversation_id, session_id=_session_filter(request)
-    ):
+    if not store.conversation_visible_to(conversation_id, session_id=_session_filter(request)):
         raise errors.conversation_not_found(conversation_id)
     renamed = store.rename_conversation(conversation_id, req.title)
     if not renamed:
@@ -381,9 +373,7 @@ def delete_conversation(conversation_id: str, request: Request) -> None:
     """Delete a conversation and its messages. 204 on success, 404 if the id
     was already gone — messages cascade via the FK on `messages.conversation_id`.
     In sandbox mode, 404s if the conversation belongs to another session."""
-    if not store.conversation_visible_to(
-        conversation_id, session_id=_session_filter(request)
-    ):
+    if not store.conversation_visible_to(conversation_id, session_id=_session_filter(request)):
         raise errors.conversation_not_found(conversation_id)
     deleted = store.delete_conversation(conversation_id)
     if not deleted:

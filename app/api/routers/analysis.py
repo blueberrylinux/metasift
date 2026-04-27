@@ -24,7 +24,7 @@ from fastapi import APIRouter
 from loguru import logger
 
 from app.api import errors, store
-from app.api.deps import DuckOk, WritesEnabled
+from app.api.deps import DuckOk
 from app.api.schemas import (
     CompositeScore,
     CoverageResponse,
@@ -90,8 +90,18 @@ def get_data_sources(duck_ok: DuckOk) -> DataSourcesResponse:
     return DataSourcesResponse(rows=rows)
 
 
+# NOT gated by WritesEnabled in sandbox: this endpoint pulls from OM
+# (read) and populates the local in-process DuckDB cache. It mutates
+# nothing in OM — the cache is per-process memory that has to be
+# hydrated for any analysis endpoint to return real numbers. Without
+# this, sandbox visitors land on a permanently-empty UI ("No metadata
+# loaded" everywhere). Abuse vector is spam-refresh, bounded by:
+#   1. Caddy's per-IP rate limit (60r/m at the edge).
+#   2. `store.try_start_scan("refresh")` below — atomic per-kind lock,
+#      so concurrent refresh requests get 409 SCAN_ALREADY_RUNNING and
+#      can't pile up parallel OM pulls.
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh(_: WritesEnabled) -> RefreshResponse:
+async def refresh() -> RefreshResponse:
     """Pull fresh metadata from OpenMetadata into DuckDB. Blocks until done
     (typically 30s-2min depending on catalog size). Logs a `scan_runs` row
     so the sidebar's 'last scan N min ago' badge can pick it up.

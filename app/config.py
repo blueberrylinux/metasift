@@ -46,26 +46,45 @@ class Settings:
         default_factory=lambda: _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     )
 
-    # Model routing — OpenRouter model IDs, browse at openrouter.ai/models
+    # Model routing — OpenRouter model IDs, browse at openrouter.ai/models.
+    #
+    # Two non-obvious choices baked in here:
+    #
+    #   1. Tool-calling routes to gpt-4o-mini, not llama-3.3. llama-3.3
+    #      tool-loops on shallow prompts ("hi" triggered 13 chained tool
+    #      calls on staging before the recursion limit caught it). The
+    #      cost gap on a typical Stew turn is ≈ $0.0005 — well worth the
+    #      reliability. Description / classification / stale / scoring /
+    #      reasoning stay on llama-3.3 for the price floor.
+    #
+    #   2. NEVER ship `:free` as a default. The `:free` suffix routes
+    #      requests through OpenRouter's throttled free-tier provider
+    #      pool (Venice et al.) regardless of which key signed the
+    #      request — sandbox visitors with their own paid BYOK still
+    #      get 429s constantly. The bare model ID picks the canonical
+    #      paid provider and the visitor's own quota.
+    #
+    # These defaults mirror METASIFT_DEFAULT_ROUTES in
+    # web/src/screens/Settings.tsx (the "Apply MetaSift defaults" preset)
+    # so the backend's env-default and the frontend's preset are the
+    # same — no ghost-route mismatch when a user toggles between them.
     model_toolcall: str = field(
-        default_factory=lambda: _env("MODEL_TOOLCALL", "meta-llama/llama-3.3-70b-instruct:free")
+        default_factory=lambda: _env("MODEL_TOOLCALL", "openai/gpt-4o-mini")
     )
     model_description: str = field(
-        default_factory=lambda: _env("MODEL_DESCRIPTION", "meta-llama/llama-3.3-70b-instruct:free")
+        default_factory=lambda: _env("MODEL_DESCRIPTION", "meta-llama/llama-3.3-70b-instruct")
     )
     model_classification: str = field(
-        default_factory=lambda: _env(
-            "MODEL_CLASSIFICATION", "meta-llama/llama-3.3-70b-instruct:free"
-        )
+        default_factory=lambda: _env("MODEL_CLASSIFICATION", "meta-llama/llama-3.3-70b-instruct")
     )
     model_stale: str = field(
-        default_factory=lambda: _env("MODEL_STALE_CHECK", "meta-llama/llama-3.3-70b-instruct:free")
+        default_factory=lambda: _env("MODEL_STALE_CHECK", "meta-llama/llama-3.3-70b-instruct")
     )
     model_scoring: str = field(
-        default_factory=lambda: _env("MODEL_SCORING", "meta-llama/llama-3.3-70b-instruct:free")
+        default_factory=lambda: _env("MODEL_SCORING", "meta-llama/llama-3.3-70b-instruct")
     )
     model_reasoning: str = field(
-        default_factory=lambda: _env("MODEL_REASONING", "meta-llama/llama-3.3-70b-instruct:free")
+        default_factory=lambda: _env("MODEL_REASONING", "meta-llama/llama-3.3-70b-instruct")
     )
 
     # App
