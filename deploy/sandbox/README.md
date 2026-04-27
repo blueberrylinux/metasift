@@ -388,11 +388,23 @@ sudo journalctl -u metasift-om.service -f
 #
 #   /opt/metasift/.venv/bin/python /opt/metasift/scripts/sandbox_rotate_om_token.py "$BOT_JWT"
 #
-# This is the path the VPS-side operator validated end-to-end on Hostinger.
-# Verified once on a fresh deploy → ingestion-bot JWT roundtripped cleanly,
+# This is the path the VPS-side operator validated end-to-end on Hostinger
+# (OM 1.9.4) → ingestion-bot JWT roundtripped cleanly,
 # scripts/sandbox_rotate_om_token.py wrote .env + restarted the API.
-# Future enhancement: fold the curl chain into a `make rotate-jwt` target
-# so it's a single command (currently four lines + the rotation script).
+#
+# CAVEAT: the `/api/v1/users/auth-mechanism/{userId}` endpoint is NOT
+# documented in OM's public OpenAPI spec — it works on 1.9.4 but is
+# considered an internal API surface. Future OM versions may move bot
+# tokens to `/api/v1/bots/{id}` directly (or remove the
+# auth-mechanism endpoint entirely). If the curl chain above starts
+# returning 404 or empty after an OM upgrade:
+#   1. Check the OM API browser at http://127.0.0.1:8585/docs for the
+#      replacement path.
+#   2. Fall back to OPTION B (manual UI grab) for the duration of one
+#      reset while the runbook is updated.
+# A `make rotate-jwt` target is a future enhancement that would fold
+# this curl chain into a script and centralize the OM-version-specific
+# fragility — not implemented yet to keep operator paths visible here.
 #
 # OPTION B (fallback — manual via UI). If for any reason the API auth
 # flow is hosed (admin password rotated, OM upgrade in flight, etc.):

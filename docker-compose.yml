@@ -111,7 +111,14 @@ services:
       AUTHORIZER_ADMIN_PRINCIPALS: "[admin]"
       AUTHORIZER_PRINCIPAL_DOMAIN: openmetadata.org
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8586/healthcheck"]
+      # bash /dev/tcp probe: opens a TCP connection to the OM admin port
+      # and exits 0 if the kernel accepts it. The OM server image is built
+      # on OpenJDK + Debian and ships bash but NOT curl; the previous
+      # `curl -f http://localhost:8586/healthcheck` test silently failed
+      # forever (exit 127, command-not-found), leaving the container
+      # marked `unhealthy` while OM was actually running fine.
+      # /dev/tcp is a bash builtin, no external binary needed.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8586"]
       interval: 30s
       timeout: 10s
       retries: 20
