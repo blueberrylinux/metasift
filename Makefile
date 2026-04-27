@@ -1,7 +1,7 @@
 # MetaSift dev commands
 # Run `make help` for the full list.
 #
-# v0.2 (current): React 19 + FastAPI. Default `make` targets point here.
+# v0.2 (current): React 18 + FastAPI. Default `make` targets point here.
 # v0.1 (preserved): Streamlit. Tagged at `v0.1-streamlit` — to run the
 # original demo: `git checkout v0.1-streamlit && uv run streamlit run app/main.py`.
 

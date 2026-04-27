@@ -103,11 +103,11 @@ runs the React app (`make api && cd web && npm run dev`).
 
 ### Interface (Stew)
 
-- **26 local tools** over the three engines + **3 MCP tools** (search, entity details, lineage)
+- **27 local tools** over the three engines + **3 MCP tools** (search, entity details, lineage)
 - **Show-your-work** trace expander per reply
 - **Review queue** as the only write surface (agent cannot write directly)
 - **Streaming responses** via LangChain's `create_agent` / LangGraph
-- **10-tab visualization panel** — Score gauge · Lineage · **Governance** · Blast radius · Stewardship · Catalog map · Tag conflicts · Quality · **DQ failures** · **DQ gaps** · **DQ risk**
+- **11-tab visualization panel** — Score gauge · Lineage · **Governance** · Blast radius · Stewardship · Catalog map · Tag conflicts · Quality · **DQ failures** · **DQ gaps** · **DQ risk**
 
 ### Bring-your-own LLM
 
