@@ -1,10 +1,10 @@
 # Sandbox VPS deployment runbook
 
-> **Status.** Phase 1 + Phase 2 are merged on `sandbox-mode`. This directory
-> contains the artifacts for [`SANDBOX_PHASES.md`](../../SANDBOX_PHASES.md)
+> **Status.** Sandbox shipped — Phases 1 through 5 merged on `main`. This
+> directory contains the artifacts for [`SANDBOX_PHASES.md`](../../SANDBOX_PHASES.md)
 > Phase 3 (VPS provisioning), Phase 4 (staging smoke test), and Phase 5
-> (production cutover). Phase 6 automation lives in `.github/workflows/`
-> (separate add-on).
+> (production cutover), now retained for re-deploy / disaster-recovery.
+> Phase 6 automation lives in `.github/workflows/` (separate add-on).
 
 ## What's in here
 
@@ -100,7 +100,7 @@ ss -tlnp | grep -E ':(80|443|8000|8585|8586) ' || echo "→ No conflicts on the 
 #       agent binding (single-node Portainer doesn't need it).
 
 # Clone the repo BEFORE creating the metasift user.
-git clone --branch sandbox-mode https://github.com/blueberrylinux/metasift.git /opt/metasift
+git clone https://github.com/blueberrylinux/metasift.git /opt/metasift
 
 # Create the service user using /opt/metasift as its home.
 # adduser does NOT touch ownership of an already-existing dir, so the clone
