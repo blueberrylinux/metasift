@@ -71,8 +71,33 @@ it creates an empty `/opt/metasift` directory and the subsequent
 apt update
 # Note: no python3.X-venv — uv (installed below) auto-fetches Python 3.11
 # from python-build-standalone, no apt package needed.
-apt install -y docker.io docker-compose-plugin make git ufw fail2ban curl
+#
+# IMPORTANT — check for pre-installed Docker before apt-installing.
+# Hostinger Ubuntu 24.04 images often ship with `docker-ce` already
+# installed from Docker's official repo. Running `apt install docker.io`
+# on top of `docker-ce` triggers a package conflict (both provide the
+# `/usr/bin/docker` binary). Detect and skip cleanly:
+if command -v docker >/dev/null 2>&1 && docker --version | grep -q 'Docker version'; then
+  echo "→ Docker already installed: $(docker --version) — skipping docker.io"
+  apt install -y docker-compose-plugin make git ufw fail2ban curl jq
+else
+  apt install -y docker.io docker-compose-plugin make git ufw fail2ban curl jq
+fi
 systemctl enable --now docker
+
+# Hostinger images may also ship with services bound on common ports.
+# Check for pre-existing listeners on 80, 443, 8000, 8585 — anything bound
+# there will collide with Caddy / FastAPI / OM.
+ss -tlnp | grep -E ':(80|443|8000|8585|8586) ' || echo "→ No conflicts on the ports we need."
+# Frequently seen on Hostinger: Cockpit (:9090, :80 redirect), Portainer
+# (:8000, :9443), PCP / cockpit-ws. If any of these surface, either:
+#   (a) `apt purge` them outright (recommended for cockpit-* / pcp on a
+#       single-purpose VPS), OR
+#   (b) rebind to loopback so they don't conflict and don't take public
+#       ports — for Portainer specifically, edit
+#       /etc/systemd/system/portainer.service (or the docker run flags)
+#       to publish only `127.0.0.1:9443:9443` and drop the :8000 edge
+#       agent binding (single-node Portainer doesn't need it).
 
 # Clone the repo BEFORE creating the metasift user.
 git clone --branch sandbox-mode https://github.com/blueberrylinux/metasift.git /opt/metasift
@@ -83,6 +108,13 @@ git clone --branch sandbox-mode https://github.com/blueberrylinux/metasift.git /
 adduser --system --group --shell /bin/bash --home /opt/metasift metasift
 chown -R metasift:metasift /opt/metasift
 
+# Add metasift to the docker group. The systemd unit metasift-om.service
+# runs `docker compose` as the metasift user, which needs read/write on
+# /var/run/docker.sock — that socket is owned by `root:docker`. Without
+# this, `systemctl start metasift-om.service` fails with "permission
+# denied while trying to connect to the Docker daemon socket".
+usermod -aG docker metasift
+
 # Firewall — only SSH + HTTP + HTTPS exposed.
 ufw default deny incoming
 ufw allow ssh
@@ -92,22 +124,47 @@ ufw --force enable
 
 # SSH hardening — key-only, no passwords. Do this AFTER you've confirmed
 # you can log in with your key, otherwise you'll lock yourself out.
+#
+# IMPORTANT — Hostinger / cloud-init drop-in gotcha. Many Ubuntu cloud
+# images (Hostinger included) ship cloud-init with a drop-in at
+# `/etc/ssh/sshd_config.d/50-cloud-init.conf` that sets
+# `PasswordAuthentication yes`. The drop-in is parsed AFTER the main
+# sshd_config and sshd uses first-match-wins per option, so editing
+# /etc/ssh/sshd_config does NOTHING — passwords still work. Patch the
+# drop-in too, and disable cloud-init's pwauth so it doesn't get
+# re-applied on next boot.
 sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+if [ -f /etc/ssh/sshd_config.d/50-cloud-init.conf ]; then
+  sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config.d/50-cloud-init.conf
+fi
+# Persist across cloud-init re-runs (e.g. after image rebuild):
+mkdir -p /etc/cloud/cloud.cfg.d
+cat > /etc/cloud/cloud.cfg.d/99-disable-pwauth.cfg <<'EOF'
+ssh_pwauth: false
+EOF
 systemctl restart ssh
+# Verify — sshd's effective config (after both files merged) should say no:
+sshd -T 2>/dev/null | grep -i passwordauthentication
+# → expect "passwordauthentication no"
 
 # fail2ban for SSH only — no web jail (Caddy rate-limit handles that;
 # false positives on a public demo are bad UX).
 systemctl enable --now fail2ban
 ```
 
-Install Node 20 (still as root — the `metasift` user has narrow sudo and
-can't apt-install):
+Install Node (still as root — the `metasift` user has narrow sudo and
+can't apt-install). Heads-up: NodeSource sometimes rolls the
+`setup_20.x` script forward to a newer LTS (e.g. installs Node 22 or
+Node 24 instead of Node 20) without renaming the script. The SPA build
+works on any Node ≥20, so accept whatever lands; if you need an exact
+pin, swap to `setup_20.x` → `setup_22.x` once 22 is your target LTS, or
+use [nvm](https://github.com/nvm-sh/nvm) for hard pinning.
 
 ```bash
 # Still as root.
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt install -y nodejs
-node --version   # → v20.x
+node --version   # → v20.x or newer LTS
 ```
 
 Switch to the `metasift` user for the rest. uv is installed under
@@ -313,20 +370,42 @@ sudo journalctl -u metasift-om.service -f
 # When you see "Server started" on port 8585, OM is ready. Ctrl-C the journal.
 
 # Fetch the ingestion-bot JWT — OM creates a fresh one on first volume
-# bootstrap. From your laptop (separate SSH session):
+# bootstrap. Two ways:
+#
+# OPTION A (recommended — no SSH tunnel needed). Hit OM's API directly
+# from the VPS, log in as the seeded admin user, then read the
+# ingestion-bot's auth mechanism (which contains its JWT). One-liner:
+#
+#   ADMIN_JWT=$(curl -s -X POST http://127.0.0.1:8585/api/v1/users/login \
+#     -H "Content-Type: application/json" \
+#     -d '{"email":"admin@openmetadata.org","password":"admin"}' | jq -r .accessToken)
+#
+#   BOT_USER_ID=$(curl -s "http://127.0.0.1:8585/api/v1/bots/name/ingestion-bot" \
+#     -H "Authorization: Bearer $ADMIN_JWT" | jq -r .botUser.id)
+#
+#   BOT_JWT=$(curl -s "http://127.0.0.1:8585/api/v1/users/auth-mechanism/$BOT_USER_ID" \
+#     -H "Authorization: Bearer $ADMIN_JWT" | jq -r .config.JWTToken)
+#
+#   /opt/metasift/.venv/bin/python /opt/metasift/scripts/sandbox_rotate_om_token.py "$BOT_JWT"
+#
+# This is the path the VPS-side operator validated end-to-end on Hostinger.
+# Verified once on a fresh deploy → ingestion-bot JWT roundtripped cleanly,
+# scripts/sandbox_rotate_om_token.py wrote .env + restarted the API.
+# Future enhancement: fold the curl chain into a `make rotate-jwt` target
+# so it's a single command (currently four lines + the rotation script).
+#
+# OPTION B (fallback — manual via UI). If for any reason the API auth
+# flow is hosed (admin password rotated, OM upgrade in flight, etc.):
 #
 #   ssh -L 8585:127.0.0.1:8585 vps
 #   → http://localhost:8585  (admin@openmetadata.org / admin)
 #   → Settings → Bots → ingestion-bot → reveal/generate token, copy it
 #
-# Back on the VPS, atomically apply it:
-#
 #   /opt/metasift/.venv/bin/python /opt/metasift/scripts/sandbox_rotate_om_token.py "<paste-jwt>"
 #
-# The script validates against OM, rewrites .env, restarts the API. The
-# nightly reset.timer NEVER triggers a re-rotation — it does a soft reset
-# that leaves the OM volumes (and JWT) untouched. You only re-run the
-# rotation script after a manual `make reset-all`.
+# The nightly reset.timer NEVER triggers a re-rotation — it does a soft
+# reset that leaves the OM volumes (and JWT) untouched. You only re-run
+# the rotation script after a manual `make reset-all`.
 
 # Now boot the API + Caddy
 sudo systemctl enable --now metasift-api.service
