@@ -41,7 +41,7 @@ MetaSift directly addresses six issues from the WeMakeDevs × OpenMetadata "Back
 
 ## Demo
 
-[Watch the demo on YouTube](https://youtu.be/-8sh1UNwvKI)
+[Watch the demo on YouTube](https://youtu.be/BmMrq-hxnHM)
 
 ## Screenshots
 

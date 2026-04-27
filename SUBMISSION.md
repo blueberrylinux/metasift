@@ -6,7 +6,7 @@
 
 **One-line pitch:** An AI-powered metadata analyst and steward that sifts through your OpenMetadata catalog to analyze health, clean dirty metadata, and automate stewardship — with plain-English DQ explanations, lineage-aware governance, and a composite score that measures what documentation coverage alone can't.
 
-**Demo video:** <https://youtu.be/-8sh1UNwvKI>
+**Demo video:** <https://youtu.be/BmMrq-hxnHM>
 
 ---
 
@@ -177,6 +177,6 @@ MIT. See [`LICENSE`](./LICENSE).
 ## Links
 
 - **Repo:** <https://github.com/blueberrylinux/metasift>
-- **Demo video:** <https://youtu.be/-8sh1UNwvKI>
+- **Demo video:** <https://youtu.be/BmMrq-hxnHM>
 - **README:** see [`README.md`](./README.md) for full architecture + setup
 - **Port specs** for a FastAPI + React rebuild: [`../metasift+/`](../metasift+/) (six feature docs, zero-refactor to the engines)
