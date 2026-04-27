@@ -1,0 +1,98 @@
+# Caddyfile — sandbox.metasift.org
+#
+# Place at /etc/caddy/Caddyfile on the VPS. After editing:
+#   sudo systemctl reload caddy
+#
+# Requires Caddy built with the `caddy-ratelimit` plugin
+# (github.com/mholt/caddy-ratelimit) — see deploy/sandbox/README.md §3.3
+# for the xcaddy build command. If xcaddy is unavailable, comment out the
+# `rate_limit` directives and either let the API self-rate-limit or fall
+# back to NGINX with `limit_req_zone`.
+#
+# IMPORTANT: the inline `rate_limit @matcher 30r/m` form below is the
+# plugin's documented quick-start syntax, but the exact accepted form
+# can drift between plugin versions. After deploying, ALWAYS run:
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+# If validation fails, the plugin probably wants the block form:
+#   rate_limit { zone chat { events 30 window 1m } match { path /api/v1/chat/* } }
+# Don't reload Caddy without validating first — a broken Caddyfile takes
+# the public site offline until a fix lands.
+
+# ── PROD: sandbox.metasift.org ──────────────────────────────────────────────
+sandbox.metasift.org {
+	encode zstd gzip
+
+	# Per-IP rate limit. 30 req/min on the LLM-bearing chat stream
+	# (each call burns the visitor's BYO OpenRouter quota), 60 req/min
+	# everywhere else. Bursts allowed via the plugin's default jitter.
+	@chat path /api/v1/chat/*
+	rate_limit @chat 30r/m
+
+	rate_limit 60r/m
+
+	# Block scripted refresh from outside the SPA's origin. /scans/refresh
+	# is a write endpoint that's already gated by SANDBOX_MODE=1 (returns
+	# 403 sandbox_read_only at the API layer), but the referer guard keeps
+	# the request count off the API entirely so abuse traffic doesn't
+	# saturate FastAPI's worker pool.
+	@blocked {
+		path /api/v1/scans/refresh
+		not header Origin https://sandbox.metasift.org
+	}
+	respond @blocked 403
+
+	reverse_proxy 127.0.0.1:8000 {
+		# SSE chat / scan streams routinely run >60s on tool-heavy turns.
+		# Without `flush_interval -1` Caddy buffers the response and the
+		# stream silently hangs at 60s — first failure mode of a
+		# misconfigured deployment per SANDBOX_PHASES.md §"Risks" #4.
+		flush_interval -1
+		transport http {
+			keepalive 5m
+			response_header_timeout 3m
+		}
+	}
+
+	log {
+		output file /var/log/caddy/sandbox.log
+		format json
+	}
+}
+
+# ── STAGING: sandbox-staging.metasift.org ───────────────────────────────────
+#
+# Phase 4 staging block. Lets us cut a temp DNS A record at
+# sandbox-staging.metasift.org → VPS IPv4, smoke-test all 13 items in
+# SANDBOX_PHASES.md §4.2, then repoint sandbox.metasift.org once green.
+# Same rate limits + SSE knobs so staging mirrors prod behaviour.
+#
+# DELETE THIS BLOCK after the prod cutover (Phase 5) is verified — leaving
+# it live keeps an extra cert + extra Let's Encrypt issuance traffic for
+# no purpose.
+sandbox-staging.metasift.org {
+	encode zstd gzip
+
+	@chat path /api/v1/chat/*
+	rate_limit @chat 30r/m
+
+	rate_limit 60r/m
+
+	@blocked {
+		path /api/v1/scans/refresh
+		not header Origin https://sandbox-staging.metasift.org
+	}
+	respond @blocked 403
+
+	reverse_proxy 127.0.0.1:8000 {
+		flush_interval -1
+		transport http {
+			keepalive 5m
+			response_header_timeout 3m
+		}
+	}
+
+	log {
+		output file /var/log/caddy/sandbox-staging.log
+		format json
+	}
+}

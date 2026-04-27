@@ -1,0 +1,42 @@
+; /etc/systemd/system/metasift-om.service
+;
+; OpenMetadata Docker stack — wraps `docker compose up/down`. Layers the
+; sandbox compose override on top of the dev compose so OM binds to
+; 127.0.0.1 only (deploy/sandbox/docker-compose.sandbox.yml).
+;
+; Ordered before metasift-api: the API depends on OM being up before its
+; first /health probe, but the API does NOT block startup on OM (the
+; sidebar paints OM red if it's down). Both units start in parallel under
+; multi-user.target; Requires= keeps the API tied to OM's lifecycle.
+
+[Unit]
+Description=MetaSift OpenMetadata stack (sandbox)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/metasift
+User=metasift
+Group=metasift
+
+ExecStart=/usr/bin/docker compose \
+  -f /opt/metasift/docker-compose.yml \
+  -f /opt/metasift/deploy/sandbox/docker-compose.sandbox.yml \
+  up -d
+
+ExecStop=/usr/bin/docker compose \
+  -f /opt/metasift/docker-compose.yml \
+  -f /opt/metasift/deploy/sandbox/docker-compose.sandbox.yml \
+  down
+
+; Pull-up timeout — OM healthcheck has a 120s start_period (compose) plus
+; the migrate one-shot can take ~60s on cold MySQL. 5 min buffer keeps
+; systemd from killing a slow-but-working start on a freshly-rebooted
+; VPS.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

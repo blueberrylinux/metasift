@@ -1,0 +1,52 @@
+; /etc/systemd/system/metasift-reset.service
+;
+; One-shot daily soft reset — fires from metasift-reset.timer at 04:00 UTC.
+; Wipes ONLY MetaSift's local state (metasift.sqlite — conversations,
+; review queue, scan history) via `make reset-metasift`. Leaves OM's
+; MySQL/ES volumes alone, so the ingestion-bot JWT stays permanent
+; across resets and no nightly token rotation is needed.
+;
+; Trade-off (intentional): visitor-applied write-backs to OM (accepted
+; description suggestions, PII tag changes from the review queue) accumulate
+; until a manual full reset. The "shared sandbox" model accepts this —
+; visitor edits to the seed catalog are visible to all next-day visitors,
+; which is the same trust model as the live review queue itself.
+;
+; When the operator wants a clean catalog (drift accumulation, weekly
+; cadence): manually `make reset-all && scripts/sandbox_rotate_om_token.py
+; <new-jwt>` from the runbook. That's the only path that touches the JWT.
+;
+; Manual trigger for testing this nightly job:
+;   sudo systemctl start metasift-reset.service
+;   journalctl -u metasift-reset.service --since today
+
+[Unit]
+Description=Soft-reset MetaSift sandbox state (sqlite only, JWT preserved)
+;
+; No Requires=/After=metasift-api.service — the reset is a maintenance
+; oneshot that wipes SQLite. Coupling it to the API would mean the timer
+; force-starts the API at 04:00 UTC if it happened to be stopped (e.g.
+; during a manual maintenance window), which is exactly the wrong
+; semantic. After= and Requires= are intentionally left only on the OM
+; stack so the post-reset API restart has a working backend to talk to.
+After=metasift-om.service
+Requires=metasift-om.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/metasift
+User=metasift
+Group=metasift
+
+EnvironmentFile=/opt/metasift/.env
+
+; reset-metasift removes metasift.sqlite + WAL + SHM. The API holds an
+; open fd to the file on Linux, so deleting it doesn't affect in-flight
+; requests — the stale inode keeps serving until the API is restarted.
+; That's why we explicitly restart the API after the wipe so subsequent
+; requests land on the freshly-recreated DB.
+ExecStart=/usr/bin/make reset-metasift
+ExecStartPost=/bin/sudo /bin/systemctl restart metasift-api.service
+
+; Bounded — the wipe is sub-second; the restart is ~5s. 60s is generous.
+TimeoutStartSec=60

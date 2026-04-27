@@ -6,7 +6,7 @@
 # original demo: `git checkout v0.1-streamlit && uv run streamlit run app/main.py`.
 
 .PHONY: help install dev run stack-up stack-down stack-logs seed clean lint test token \
-        api web web-install build-web reset-metasift reset-all
+        api web web-install build-web reset-metasift reset-all sandbox-stack-up sandbox-config
 
 help:
 	@echo "MetaSift dev commands (v0.2 — React + FastAPI)"
@@ -31,6 +31,11 @@ help:
 	@echo "Reset"
 	@echo "  make reset-metasift — wipe MetaSift sqlite (keep OM as-is)"
 	@echo "  make reset-all      — wipe OM volumes + MetaSift sqlite (full demo reset)"
+	@echo ""
+	@echo "Sandbox VPS deployment helpers (mostly for verifying configs locally — see"
+	@echo "deploy/sandbox/README.md for the actual VPS runbook)"
+	@echo "  make sandbox-config    — render the merged sandbox compose to verify port bindings"
+	@echo "  make sandbox-stack-up  — boot OM stack with the sandbox override (OM bound to 127.0.0.1)"
 	@echo ""
 	@echo "v0.1 Streamlit (preserved)"
 	@echo "  git checkout v0.1-streamlit && uv run streamlit run app/main.py"
@@ -138,3 +143,24 @@ reset-all: stack-down
 	@echo "  2. make token              — print JWT rotation instructions"
 	@echo "  3. update OPENMETADATA_JWT_TOKEN + AI_SDK_TOKEN in .env"
 	@echo "  4. make seed && make run   — repopulate + start the React app"
+
+# ─── Sandbox compose helpers ───────────────────────────────────────────────
+# These layer deploy/sandbox/docker-compose.sandbox.yml on top of the dev
+# compose so OM binds to 127.0.0.1 only — what the VPS actually runs.
+# Useful locally to confirm the override merges correctly before pushing.
+
+sandbox-config:
+	@docker compose \
+		-f docker-compose.yml \
+		-f deploy/sandbox/docker-compose.sandbox.yml \
+		config
+
+sandbox-stack-up:
+	docker compose \
+		-f docker-compose.yml \
+		-f deploy/sandbox/docker-compose.sandbox.yml \
+		up -d
+	@echo ""
+	@echo "⚠  OM is bound to 127.0.0.1 only — http://localhost:8585 still works"
+	@echo "   from this machine, but external connections are refused. This"
+	@echo "   mirrors the VPS posture; revert with 'make stack-down && make stack-up'."

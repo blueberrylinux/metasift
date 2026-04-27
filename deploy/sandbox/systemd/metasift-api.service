@@ -1,0 +1,52 @@
+; /etc/systemd/system/metasift-api.service
+;
+; FastAPI port — uvicorn behind Caddy. Bound to 127.0.0.1 only; Caddy is
+; the sole public-facing surface on :443. SANDBOX_MODE=1 + SERVE_STATIC=1
+; come from the unit's Environment= rather than from .env so the values
+; can never be accidentally overridden by a stray edit to /opt/metasift/.env
+; on the VPS (which carries OM JWT and other operator state).
+
+[Unit]
+Description=MetaSift FastAPI port (sandbox)
+After=metasift-om.service network-online.target
+Requires=metasift-om.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/metasift
+User=metasift
+Group=metasift
+
+EnvironmentFile=/opt/metasift/.env
+Environment=SANDBOX_MODE=1
+Environment=SERVE_STATIC=1
+Environment=API_HOST=127.0.0.1
+Environment=API_PORT=8000
+Environment=APP_ENV=production
+Environment=LOG_LEVEL=INFO
+
+; uvicorn knobs:
+;   * --host 127.0.0.1: never bind public, Caddy fronts.
+;   * --timeout-keep-alive 5: SSE consumers reconnect cheaply.
+;   * --limit-concurrency 64: hard ceiling so a thread-pool exhaustion
+;     can't accumulate sockets indefinitely. The chat / scan executors
+;     have their own thread-pool caps inside the app (4 + 6 workers);
+;     this is the outer guard.
+ExecStart=/opt/metasift/.venv/bin/uvicorn app.api.main:app \
+  --host 127.0.0.1 --port 8000 \
+  --timeout-keep-alive 5 --limit-concurrency 64
+
+Restart=on-failure
+RestartSec=5
+
+; Hardening — minimal but real. The metasift user has no shell sudo apart
+; from the systemd-restart entries (deploy/sandbox/sudoers.d-metasift).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/metasift /var/log/caddy
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

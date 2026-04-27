@@ -1,0 +1,23 @@
+# /etc/logrotate.d/caddy — drop in via:
+#   sudo install -o root -g root -m 644 \
+#     /opt/metasift/deploy/sandbox/logrotate-caddy \
+#     /etc/logrotate.d/caddy
+#
+# Caddy writes JSON access logs to /var/log/caddy/sandbox.log (and
+# .../sandbox-staging.log during Phase 4). Default Caddy install does NOT
+# ship a logrotate config — left alone the file grows without bound and
+# eventually fills the disk.
+#
+# Weekly rotation, 4 archives compressed = ~1 month retention. `copytruncate`
+# avoids needing a Caddy reload (Caddy holds the fd open with O_APPEND;
+# truncating the file in place keeps writes flowing without a SIGHUP cycle).
+
+/var/log/caddy/*.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

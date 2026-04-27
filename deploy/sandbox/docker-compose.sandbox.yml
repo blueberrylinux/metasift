@@ -1,0 +1,40 @@
+# Sandbox compose override — applied ON TOP of the repo root docker-compose.yml.
+#
+# Usage on the VPS:
+#   docker compose \
+#     -f /opt/metasift/docker-compose.yml \
+#     -f /opt/metasift/deploy/sandbox/docker-compose.sandbox.yml \
+#     up -d
+#
+# The systemd unit `metasift-om.service` already wires this; only invoke
+# directly for one-off troubleshooting.
+#
+# What this file changes vs. the dev compose:
+#
+#   1. OpenMetadata server's :8585 / :8586 ports are bound to the loopback
+#      address (127.0.0.1) instead of the wildcard. On a public VPS the dev
+#      compose's `"8585:8585"` would expose OM admin to the internet —
+#      a major security gap that SANDBOX_DEPLOYMENT_PLAN.md §2 explicitly
+#      forbids. Caddy fronts everything on 443; OM is reachable only via
+#      SSH tunnel (`ssh -L 8585:127.0.0.1:8585 vps`).
+#
+#   2. Smaller Elasticsearch heap (768 MB vs. 1 GB). Risk-mitigation per
+#      SANDBOX_PHASES.md §"Risks" #1 — the KVM2 has 8 GB RAM total and the
+#      OM stack pushes ~6 GB on its own; trimming ES heap leaves room for
+#      FastAPI + Caddy + system without leaning on swap during seed.
+#
+# Local-dev compose (`docker-compose.yml`) is unchanged — it still binds OM
+# to 0.0.0.0 so `localhost:8585` works for the developer. This override is
+# additive and only loaded on the VPS.
+
+services:
+  elasticsearch:
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms768m -Xmx768m
+
+  openmetadata-server:
+    ports:
+      - "127.0.0.1:8585:8585"
+      - "127.0.0.1:8586:8586"

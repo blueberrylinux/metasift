@@ -1,0 +1,16 @@
+# /etc/sudoers.d/metasift — drop in via:
+#   sudo install -o root -g root -m 440 \
+#     /opt/metasift/deploy/sandbox/sudoers.d-metasift \
+#     /etc/sudoers.d/metasift
+#   sudo visudo -c   # syntax check; refuse to install if non-zero
+#
+# Lets the unprivileged `metasift` user restart the two managed units
+# without a password — needed for the GitHub Actions deploy (Phase 6) and
+# for ad-hoc operator restarts after editing /opt/metasift/.env.
+#
+# Deliberately narrow:
+#   * Only /bin/systemctl restart, no start/stop/disable.
+#   * Only the two metasift-* units, never anything else.
+#   * No shell, no env-keep — closes the obvious privesc paths.
+
+metasift ALL=(root) NOPASSWD: /bin/systemctl restart metasift-api.service, /bin/systemctl restart metasift-om.service

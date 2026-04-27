@@ -1,0 +1,24 @@
+; /etc/systemd/system/metasift-reset.timer
+;
+; Daily 04:00 UTC reset. Why this hour: low-traffic window globally
+; (~midnight US east coast, ~05:00 CET, ~13:00 JST). The 3-min downtime
+; is unlikely to land on an active visitor.
+;
+; Persistent=true means if the VPS was off when 04:00 fired (e.g. host
+; reboot), the next boot fires the reset immediately. Without it a daily
+; reset can silently skip a day after maintenance.
+;
+; Enable with:
+;   sudo systemctl enable --now metasift-reset.timer
+;   systemctl list-timers metasift-reset.timer
+
+[Unit]
+Description=Daily MetaSift sandbox reset
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+Unit=metasift-reset.service
+
+[Install]
+WantedBy=timers.target

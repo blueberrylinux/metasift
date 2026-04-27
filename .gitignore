@@ -44,5 +44,11 @@ web/vite.config.d.ts
 # surface. Keep the file in the working tree (so it's there when I want it),
 # just don't push it.
 /SANDBOX_DEPLOYMENT_PLAN.md
+/SANDBOX_PHASES.md
 /PRE_SUBMISSION_AUDIT.md
 /WEBSITE_UPDATE_PLAN.md
+
+# Operator-only maintenance manual — uploaded to the VPS alongside the
+# rest of the local server files, never pushed (mentions specific kill
+# switches, operator onboarding steps, OpenRouter dashboard checks).
+/deploy/sandbox/MAINTENANCE.md
