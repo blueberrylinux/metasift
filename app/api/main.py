@@ -114,13 +114,12 @@ async def bind_request_api_key(request: Request, call_next):
 # ── Session cookie middleware ─────────────────────────────────────────────
 #
 # Tag every visitor with a stable UUID4 cookie so /chat/conversations can
-# filter by it under SANDBOX_MODE=1. Outside sandbox the cookie is still
-# set (harmless — single-user installs already have implicit affinity to
-# their own browser), and new conversations get the session_id column
-# populated so a future SANDBOX_MODE=1 flip on the same DB does the right
-# thing.
+# filter by it under SANDBOX_MODE=1. Gated on sandbox_mode: outside
+# sandbox, the middleware is a pass-through — no cookie is set, no
+# request.state.session_id is assigned, no DB column gets populated.
+# Local-install / self-hosted users see zero footprint.
 #
-# Cookie attrs:
+# Cookie attrs (sandbox only):
 #   * 30-day Max-Age — long enough for a returning visitor to find their
 #     own past chats; nightly reset of the SQLite store wipes the rows
 #     anyway, so longer doesn't help.
@@ -135,6 +134,13 @@ _SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 
 @app.middleware("http")
 async def bind_session_cookie(request: Request, call_next):
+    if not api_settings.sandbox_mode:
+        # Non-sandbox: no cookie, no session_id on request.state. The chat
+        # routes guard reads with `getattr(request.state, "session_id", None)`
+        # and `_session_filter` short-circuits on `not sandbox_mode` — so
+        # absence here is a deliberate no-op, not a bug.
+        return await call_next(request)
+
     existing = request.cookies.get(SESSION_COOKIE)
     session_id = existing or str(uuid.uuid4())
     request.state.session_id = session_id
