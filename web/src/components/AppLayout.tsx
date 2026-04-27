@@ -12,6 +12,8 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { useSandbox } from '../lib/sandbox';
+import { SandboxBanner } from './SandboxBanner';
 import type { NavKey } from './Sidebar';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
@@ -47,11 +49,16 @@ export function AppLayout({
     }
   };
 
+  // Read-only/public-demo flag from /health. Always false on local installs;
+  // when true we render the SandboxBanner under the TopBar.
+  const sandbox = useSandbox();
+
   return (
     <div className="relative min-h-screen hero-glow bg-ink-bg text-ink-text">
       <div className="absolute inset-0 grid-bg opacity-40 pointer-events-none" />
       <div className="relative">
         <TopBar onOpenWelcome={() => setWelcomeOpen(true)} />
+        {sandbox && <SandboxBanner />}
         <div className="flex">
           <Sidebar activeKey={activeKey} />
           <main

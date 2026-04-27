@@ -30,6 +30,7 @@ import {
   type ReviewItem,
   type ReviewKind,
 } from '../lib/api';
+import { useSandbox } from '../lib/sandbox';
 
 type FilterKey = 'all' | ReviewKind;
 type ActStatus = 'accepted' | 'accepted_edited' | 'rejected';
@@ -474,6 +475,7 @@ function DiffPanel({
   onAcceptEdited: (value: string) => void | Promise<void>;
   onReject: () => void | Promise<void>;
 }) {
+  const sandbox = useSandbox();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.new);
   const [err, setErr] = useState<string | null>(null);
@@ -606,7 +608,15 @@ function DiffPanel({
 
       {/* Actions */}
       <div className="mt-6 flex items-center gap-2 flex-wrap">
-        {status ? (
+        {sandbox ? (
+          <div className="flex-1 text-[12px] rounded-md border border-amber-500/20 bg-amber-500/5 text-amber-200 px-3 py-2">
+            <span className="font-semibold mr-2 uppercase tracking-wider text-amber-300">
+              Read-only
+            </span>
+            Accept / edit / reject are disabled in the public sandbox. Clone the
+            repo and run locally to apply suggestions to your OpenMetadata.
+          </div>
+        ) : status ? (
           <div className="flex-1 text-[12px] text-slate-400">
             Status:{' '}
             <span

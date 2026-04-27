@@ -29,6 +29,8 @@ import {
   listReview,
   streamScan,
 } from '../lib/api';
+import { useActiveScan, useSandbox } from '../lib/sandbox';
+import { useByoKeyTrap } from './ByoKeyModal';
 import { MetricMini, type Tone } from './MetricMini';
 import { NavIcon, type NavIconKind } from './NavIcon';
 import { ScoreRing } from './ScoreRing';
@@ -598,6 +600,15 @@ function QuickAction({
   // Abort in-flight scans on unmount (route change, app close) so the
   // backend's dedicated scan executor doesn't accumulate orphaned workers.
   const abortRef = useRef<AbortController | null>(null);
+  // Sandbox: trap 402 byo_key_required → BYO-key modal. Cross-visitor
+  // scan polling: disable button when ANYONE's scan is active and this
+  // button hasn't kicked it off itself (state.running covers self-runs).
+  const byoKey = useByoKeyTrap();
+  const sandbox = useSandbox();
+  const { active: activeScan } = useActiveScan();
+  const refresh = kind === 'refresh';
+  const sandboxBlocksRefresh = sandbox && refresh;
+  const otherScanRunning = sandbox && !!activeScan && !state.running;
 
   useEffect(() => {
     return () => {
@@ -640,6 +651,10 @@ function QuickAction({
         );
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return;
+        if (byoKey.trap(e)) {
+          setState({ ...INITIAL_STATE });
+          return;
+        }
         throw e;
       }
     },
@@ -650,6 +665,7 @@ function QuickAction({
       qc.invalidateQueries({ queryKey: ['viz'] });
       qc.invalidateQueries({ queryKey: ['dq'] });
       qc.invalidateQueries({ queryKey: ['scan-status'] });
+      qc.invalidateQueries({ queryKey: ['scans', 'active'] });
     },
     onError: (e) => {
       const msg = e instanceof Error ? e.message : String(e);
@@ -662,12 +678,21 @@ function QuickAction({
     ? Math.min(100, (state.step / state.total) * 100)
     : 0;
 
+  // Tooltip surfaces WHY the button is disabled (running self / running
+  // other / sandbox-blocked refresh) so users don't get a silent dead button.
+  const blockReason = sandboxBlocksRefresh
+    ? 'Read-only sandbox — refresh runs nightly via systemd timer'
+    : otherScanRunning
+      ? `Another visitor is running a ${activeScan?.kind ?? 'scan'} — wait ~30s`
+      : null;
+  const disabled = state.running || sandboxBlocksRefresh || otherScanRunning;
   return (
     <button
       type="button"
       onClick={() => run.mutate()}
-      disabled={state.running}
-      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/40 hover:border-emerald-500/30 hover:bg-slate-900 transition disabled:opacity-70 disabled:cursor-wait"
+      disabled={disabled}
+      title={blockReason ?? undefined}
+      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/40 hover:border-emerald-500/30 hover:bg-slate-900 transition disabled:opacity-70 disabled:cursor-not-allowed"
     >
       <div className="w-6 h-6 rounded bg-slate-800 text-emerald-400 flex items-center justify-center text-sm">
         {icon}

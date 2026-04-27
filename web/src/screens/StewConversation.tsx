@@ -14,6 +14,7 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { AppLayout } from '../components/AppLayout';
+import { useByoKeyTrap } from '../components/ByoKeyModal';
 import { Composer } from '../components/Composer';
 import { EditableTitle } from '../components/EditableTitle';
 import { EmptyState } from '../components/EmptyState';
@@ -46,6 +47,10 @@ export function StewConversation() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const autoSentRef = useRef(false);
+  // Sandbox public-demo: traps a 402 byo_key_required from streamChat and
+  // opens the BYO-key modal. No-op for non-sandbox users (the API never
+  // returns 402 in that mode).
+  const byoKey = useByoKeyTrap();
   // `stickRef` holds the authoritative "should I follow new content?" flag —
   // a ref so the ResizeObserver callback always reads the latest value
   // without re-subscribing. `atBottom` mirrors it for the pill's render.
@@ -194,6 +199,14 @@ export function StewConversation() {
         // AbortError is expected when the user navigates away — swallow it
         // so useMutation doesn't flash an error state for an intentional cancel.
         if (e instanceof DOMException && e.name === 'AbortError') return;
+        // Sandbox: a 402 byo_key_required opens the BYO-key modal. Swallow
+        // the error and clear the in-flight bubble so the user can retry
+        // their question after pasting a key. Non-sandbox: trap returns
+        // false and the original throw path runs.
+        if (byoKey.trap(e)) {
+          setInFlight(null);
+          return;
+        }
         throw e;
       }
     },

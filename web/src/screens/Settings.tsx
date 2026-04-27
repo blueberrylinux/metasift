@@ -18,6 +18,8 @@ import { PageHeader } from '../components/PageHeader';
 import { Skeleton } from '../components/Skeleton';
 import { toast } from 'sonner';
 
+import { useSandbox } from '../lib/sandbox';
+
 import {
   ApiError,
   getLLMCatalog,
@@ -172,6 +174,12 @@ export function Settings() {
     staleTime: 10 * 60_000,
   });
 
+  // Sandbox public-demo: every mutation endpoint hit from this screen 403s
+  // sandbox_read_only. The form remains visible (so users can see what the
+  // server is configured with) but Save / Reset / Test are gated and a
+  // banner explains why.
+  const sandbox = useSandbox();
+
   // Local form state — mirrors the server config, but edits stay local
   // until the user hits Save. We don't auto-push every keystroke.
   const [providerId, setProviderId] = useState('openrouter');
@@ -300,24 +308,27 @@ export function Settings() {
             <button
               type="button"
               onClick={() => reset.mutate()}
-              disabled={reset.isPending}
-              className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-50"
+              disabled={reset.isPending || sandbox}
+              title={sandbox ? 'Read-only sandbox' : undefined}
+              className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Reset to .env
             </button>
             <button
               type="button"
               onClick={() => runTest.mutate()}
-              disabled={runTest.isPending}
-              className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 hover:text-emerald-300 hover:border-emerald-500/40 disabled:opacity-50"
+              disabled={runTest.isPending || sandbox}
+              title={sandbox ? 'Read-only sandbox' : undefined}
+              className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 hover:text-emerald-300 hover:border-emerald-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {runTest.isPending ? 'Testing…' : 'Test connection'}
             </button>
             <button
               type="button"
               onClick={() => save.mutate()}
-              disabled={save.isPending || !model}
-              className="text-[11px] px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+              disabled={save.isPending || !model || sandbox}
+              title={sandbox ? 'Read-only sandbox' : undefined}
+              className="text-[11px] px-3 py-1 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {save.isPending ? 'Saving…' : 'Save & reload agent'}
             </button>
@@ -326,6 +337,18 @@ export function Settings() {
       />
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-8">
+        {sandbox && (
+          <div className="mb-6 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[12px] text-amber-200/90">
+            <div className="font-semibold uppercase tracking-wider text-amber-300 mb-1">
+              Read-only sandbox
+            </div>
+            Settings are visible but cannot be saved here. Each visitor pastes
+            their own free OpenRouter key on first chat — it's stored in your
+            browser, not on the server. Clone the repo and run{' '}
+            <code className="font-mono text-[11px] text-amber-100">make api</code>{' '}
+            locally for full write access.
+          </div>
+        )}
         {configQ.isLoading ? (
           <SettingsSkeleton />
         ) : configQ.error ? (
@@ -654,6 +677,7 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
 // only `has_token`), so the input is empty on reload.
 function OMConnectionPanel() {
   const qc = useQueryClient();
+  const sandbox = useSandbox();
   const cfg = useQuery({
     queryKey: ['om', 'config'],
     queryFn: getOMConfig,
@@ -795,7 +819,8 @@ function OMConnectionPanel() {
         <button
           type="button"
           onClick={() => save.mutate()}
-          disabled={save.isPending || !dirty || !host.trim() || !jwt.trim()}
+          disabled={save.isPending || !dirty || !host.trim() || !jwt.trim() || sandbox}
+          title={sandbox ? 'Read-only sandbox' : undefined}
           className="text-[12px] px-4 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {save.isPending ? 'Saving…' : 'Save & test'}
@@ -803,8 +828,14 @@ function OMConnectionPanel() {
         <button
           type="button"
           onClick={() => reset.mutate()}
-          disabled={reset.isPending || data.source !== 'sqlite'}
-          title={data.source === 'sqlite' ? 'Drop the UI-saved values and fall back to .env' : 'Already using .env'}
+          disabled={reset.isPending || data.source !== 'sqlite' || sandbox}
+          title={
+            sandbox
+              ? 'Read-only sandbox'
+              : data.source === 'sqlite'
+                ? 'Drop the UI-saved values and fall back to .env'
+                : 'Already using .env'
+          }
           className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 hover:text-white hover:border-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {reset.isPending ? 'Resetting…' : 'Reset to .env'}

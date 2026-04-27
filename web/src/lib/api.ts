@@ -63,10 +63,65 @@ export interface HealthResponse {
   duck: boolean;
   sqlite: boolean;
   version: string;
+  // True when the API is running with SANDBOX_MODE=1. Drives the topbar
+  // banner, BYO-key modal, hidden Review actions, and read-only Settings.
+  // Older API versions don't emit this field — treat absent as false.
+  sandbox?: boolean;
 }
 
 export function getHealth(): Promise<HealthResponse> {
   return getJSON<HealthResponse>('/health');
+}
+
+// ── BYO-key (sandbox public-demo) ─────────────────────────────────────────
+//
+// In sandbox mode each visitor pastes their own free OpenRouter key — we
+// inject it as the `X-OpenRouter-Key` header on every chat/scan request.
+// localStorage so a returning visitor doesn't have to re-paste; deliberately
+// NOT a cookie (cookies cross-origin in confused ways and leak via referer).
+
+const BYO_KEY_STORAGE = 'metasift_openrouter_key';
+
+export function getStoredOpenRouterKey(): string | null {
+  try {
+    return localStorage.getItem(BYO_KEY_STORAGE);
+  } catch {
+    // Private mode / storage disabled — caller falls through to the modal.
+    return null;
+  }
+}
+
+export function setStoredOpenRouterKey(key: string): void {
+  try {
+    localStorage.setItem(BYO_KEY_STORAGE, key);
+  } catch {
+    // Storage unavailable — the key still applies in-memory for this tab
+    // via byoKeyHeaders() reading getStoredOpenRouterKey directly each call.
+    // A hard failure here would block the user with no recovery; better to
+    // silently degrade and re-prompt next session.
+  }
+}
+
+export function clearStoredOpenRouterKey(): void {
+  try {
+    localStorage.removeItem(BYO_KEY_STORAGE);
+  } catch {
+    // ignore
+  }
+}
+
+function byoKeyHeaders(): Record<string, string> {
+  const k = getStoredOpenRouterKey();
+  return k ? { 'X-OpenRouter-Key': k } : {};
+}
+
+export interface ValidateKeyResponse {
+  ok: boolean;
+  error: string | null;
+}
+
+export function validateOpenRouterKey(key: string): Promise<ValidateKeyResponse> {
+  return postJSON<ValidateKeyResponse>('/llm/validate-key', { key });
 }
 
 // ── /analysis ──────────────────────────────────────────────────────────────
@@ -256,7 +311,11 @@ export async function streamChat(
 ): Promise<void> {
   const r = await fetch(`${API}/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...byoKeyHeaders(),
+    },
     body: JSON.stringify(req),
     signal,
   });
@@ -516,8 +575,16 @@ export interface ScanStatusResponse {
   kinds: Record<string, ScanRun | null>;
 }
 
+export interface ActiveScanResponse {
+  active: ScanRun | null;
+}
+
 export function getScanStatus(): Promise<ScanStatusResponse> {
   return getJSON<ScanStatusResponse>('/scans/status');
+}
+
+export function getActiveScan(): Promise<ActiveScanResponse> {
+  return getJSON<ActiveScanResponse>('/scans/active');
 }
 
 // Parse an SSE block the same way `parseSSEBlock` does for /chat/stream, but
@@ -702,7 +769,11 @@ export async function streamScan(
   const path = `/scans/${SCAN_PATH[kind]}`;
   const r = await fetch(API + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...byoKeyHeaders(),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });

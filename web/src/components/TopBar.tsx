@@ -15,6 +15,8 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { getHealth, type ScanFrame, streamScan } from '../lib/api';
+import { useSandbox } from '../lib/sandbox';
+import { useByoKeyTrap } from './ByoKeyModal';
 import { LogoM } from './LogoM';
 
 // Flip to 'classic' to drop the route shortcuts + refresh button and
@@ -115,6 +117,13 @@ function RefreshMetadataButton() {
   const [step, setStep] = useState(0);
   const [total, setTotal] = useState(0);
   const [label, setLabel] = useState('');
+  // Refresh is a sandbox-gated write endpoint — disable the button entirely
+  // when sandbox=true so the user doesn't waste a click on a guaranteed
+  // 403 sandbox_read_only. Tooltip explains.
+  const sandbox = useSandbox();
+  // Trap any 402 byo_key_required (would only fire if a future, non-write
+  // refresh path is added; harmless in current code).
+  const byoKey = useByoKeyTrap();
 
   // Abort if the topbar unmounts (eg. tab close).
   useEffect(() => {
@@ -162,6 +171,10 @@ function RefreshMetadataButton() {
         );
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return;
+        if (byoKey.trap(e)) {
+          setRunning(false);
+          return;
+        }
         throw e;
       }
     },
@@ -190,9 +203,15 @@ function RefreshMetadataButton() {
     <button
       type="button"
       onClick={() => run.mutate()}
-      disabled={running}
-      title={running ? `${step}/${total} · ${label}` : 'Pull latest metadata from OpenMetadata'}
-      className="text-[12px] px-3 py-1.5 rounded-md text-slate-200 border border-emerald-500/20 bg-emerald-500/5 hover:text-white hover:bg-emerald-500/10 hover:border-emerald-500/30 transition disabled:cursor-wait flex items-center gap-2 min-w-[170px]"
+      disabled={running || sandbox}
+      title={
+        sandbox
+          ? 'Read-only sandbox — refresh runs nightly via systemd timer'
+          : running
+            ? `${step}/${total} · ${label}`
+            : 'Pull latest metadata from OpenMetadata'
+      }
+      className="text-[12px] px-3 py-1.5 rounded-md text-slate-200 border border-emerald-500/20 bg-emerald-500/5 hover:text-white hover:bg-emerald-500/10 hover:border-emerald-500/30 transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-2 min-w-[170px]"
     >
       <span className={running ? 'animate-spin' : ''}>↻</span>
       {running ? (
