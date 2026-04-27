@@ -1,34 +1,53 @@
 # Caddyfile — sandbox.metasift.org
 #
 # Place at /etc/caddy/Caddyfile on the VPS. After editing:
+#   sudo caddy validate --config /etc/caddy/Caddyfile   # ALWAYS validate first
 #   sudo systemctl reload caddy
 #
 # Requires Caddy built with the `caddy-ratelimit` plugin
 # (github.com/mholt/caddy-ratelimit) — see deploy/sandbox/README.md §3.3
 # for the xcaddy build command. If xcaddy is unavailable, comment out the
-# `rate_limit` directives and either let the API self-rate-limit or fall
-# back to NGINX with `limit_req_zone`.
+# rate_limit blocks and either let the API self-rate-limit or fall back
+# to NGINX with `limit_req_zone`.
 #
-# IMPORTANT: the inline `rate_limit @matcher 30r/m` form below is the
-# plugin's documented quick-start syntax, but the exact accepted form
-# can drift between plugin versions. After deploying, ALWAYS run:
-#   sudo caddy validate --config /etc/caddy/Caddyfile
-# If validation fails, the plugin probably wants the block form:
-#   rate_limit { zone chat { events 30 window 1m } match { path /api/v1/chat/* } }
-# Don't reload Caddy without validating first — a broken Caddyfile takes
-# the public site offline until a fix lands.
+# Why the global `order` block: caddy-ratelimit is a third-party directive,
+# and Caddy has no built-in ordering for it. Without an explicit order it
+# runs at an unpredictable point in the request pipeline (often AFTER
+# reverse_proxy, which defeats the purpose). Pinning it before basicauth
+# puts it early in the auth/limiting phase where it belongs.
+
+{
+	order rate_limit before basicauth
+}
 
 # ── PROD: sandbox.metasift.org ──────────────────────────────────────────────
 sandbox.metasift.org {
 	encode zstd gzip
 
-	# Per-IP rate limit. 30 req/min on the LLM-bearing chat stream
-	# (each call burns the visitor's BYO OpenRouter quota), 60 req/min
-	# everywhere else. Bursts allowed via the plugin's default jitter.
-	@chat path /api/v1/chat/*
-	rate_limit @chat 30r/m
-
-	rate_limit 60r/m
+	# Per-IP rate limit. Two zones, evaluated top-to-bottom. The first
+	# matching zone wins for a given request:
+	#   * `chat` — LLM-bearing endpoints. 30 req/min/IP. Each call burns
+	#     the visitor's BYO OpenRouter quota; this is for abuse control,
+	#     not their wallet (OpenRouter rate-limits the key separately).
+	#   * `everything` — catch-all for the rest. 60 req/min/IP.
+	# The block form is what `caddy-ratelimit` actually accepts; the
+	# inline `rate_limit @matcher 30r/m` shorthand is NOT supported by
+	# this plugin (validated against the xcaddy-built binary).
+	rate_limit {
+		zone chat {
+			match {
+				path /api/v1/chat/*
+			}
+			key {remote_host}
+			events 30
+			window 1m
+		}
+		zone everything {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
 
 	# Block scripted refresh from outside the SPA's origin. /scans/refresh
 	# is a write endpoint that's already gated by SANDBOX_MODE=1 (returns
@@ -72,10 +91,21 @@ sandbox.metasift.org {
 sandbox-staging.metasift.org {
 	encode zstd gzip
 
-	@chat path /api/v1/chat/*
-	rate_limit @chat 30r/m
-
-	rate_limit 60r/m
+	rate_limit {
+		zone chat-staging {
+			match {
+				path /api/v1/chat/*
+			}
+			key {remote_host}
+			events 30
+			window 1m
+		}
+		zone everything-staging {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
 
 	@blocked {
 		path /api/v1/scans/refresh

@@ -142,7 +142,9 @@ It's already in place under `/opt/metasift/deploy/sandbox/` from the
 `git clone` above. The systemd unit `metasift-om.service` automatically
 layers it on top of the dev compose — no further action needed.
 
-If you need to verify by hand:
+If you need to verify by hand — **do this every time the override file
+changes**, since Compose merges `ports:` lists additively by default and
+a missing `!override` tag silently exposes OM publicly:
 
 ```bash
 sudo -iu metasift
@@ -150,8 +152,12 @@ cd /opt/metasift
 docker compose \
   -f docker-compose.yml \
   -f deploy/sandbox/docker-compose.sandbox.yml \
-  config | grep -A1 '8585'
-# → should show "127.0.0.1:8585" not "8585"
+  config | grep -E 'published|target' | head -10
+# → for openmetadata-server, should show ONLY:
+#     published: "8585", host_ip: 127.0.0.1
+#     published: "8586", host_ip: 127.0.0.1
+# → if you also see published without host_ip (or with 0.0.0.0), the
+#   `!override` tag in the override file got lost — fix before booting.
 ```
 
 ---

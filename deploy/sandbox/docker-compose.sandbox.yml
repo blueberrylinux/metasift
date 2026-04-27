@@ -18,10 +18,23 @@
 #      forbids. Caddy fronts everything on 443; OM is reachable only via
 #      SSH tunnel (`ssh -L 8585:127.0.0.1:8585 vps`).
 #
+#      CRITICAL: the `ports: !override` YAML tag is load-bearing. Compose
+#      merges `ports:` sequences ADDITIVELY by default — without !override
+#      the final merged config has BOTH `"8585:8585"` (from base) AND
+#      `"127.0.0.1:8585:8585"` (from this file), and the public binding
+#      wins. UFW doesn't help (Docker manipulates the DOCKER iptables
+#      chain in front of the filter table that ufw owns). Always
+#      `make sandbox-config | grep -A4 'openmetadata-server'` after
+#      editing this file to verify ONLY the loopback binding survives.
+#
 #   2. Smaller Elasticsearch heap (768 MB vs. 1 GB). Risk-mitigation per
 #      SANDBOX_PHASES.md §"Risks" #1 — the KVM2 has 8 GB RAM total and the
 #      OM stack pushes ~6 GB on its own; trimming ES heap leaves room for
-#      FastAPI + Caddy + system without leaning on swap during seed.
+#      FastAPI + Caddy + system without leaning on swap during seed. The
+#      base's other env vars (discovery.type, xpack.security) are already
+#      correct, no override needed for them. ES_JAVA_OPTS appears in both
+#      base and override; Compose merges environment maps with last-write-
+#      wins per key so the override's value cleanly replaces the base's.
 #
 # Local-dev compose (`docker-compose.yml`) is unchanged — it still binds OM
 # to 0.0.0.0 so `localhost:8585` works for the developer. This override is
@@ -30,11 +43,9 @@
 services:
   elasticsearch:
     environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms768m -Xmx768m
 
   openmetadata-server:
-    ports:
+    ports: !override
       - "127.0.0.1:8585:8585"
       - "127.0.0.1:8586:8586"
