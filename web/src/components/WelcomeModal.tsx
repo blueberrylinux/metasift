@@ -203,6 +203,29 @@ export function WelcomeModal({ onClose }: Props) {
           </button>
         </div>
 
+        {health.data?.sandbox && (
+          <div className="relative mx-8 mt-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="text-[11px] uppercase tracking-wider text-amber-400 font-semibold">
+                You&apos;re on the public sandbox
+              </div>
+            </div>
+            <div className="text-[13px] text-slate-200 leading-relaxed">
+              <span className="text-amber-300 font-medium">Edits are shared</span> with
+              everyone visiting right now &mdash; review-queue accepts/rejects, any
+              descriptions you confirm, all visible to the next visitor. The catalog{' '}
+              <span className="text-amber-300 font-medium">resets daily at 04:00 UTC</span>.
+            </div>
+            <div className="text-[12px] text-slate-400 mt-2 leading-relaxed">
+              Writes back to OpenMetadata are gated &mdash; clicking Accept on a review
+              item shows a 403.{' '}
+              <span className="text-slate-300">Bring your own free OpenRouter key</span>{' '}
+              on first chat; the key stays in your browser&apos;s localStorage, never
+              persisted server-side.
+            </div>
+          </div>
+        )}
+
         <div className="relative p-8 grid grid-cols-1 md:grid-cols-5 gap-6">
           {/* Features */}
           <div className="md:col-span-3 space-y-3">

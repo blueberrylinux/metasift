@@ -606,8 +606,10 @@ function QuickAction({
   const byoKey = useByoKeyTrap();
   const sandbox = useSandbox();
   const { active: activeScan } = useActiveScan();
-  const refresh = kind === 'refresh';
-  const sandboxBlocksRefresh = sandbox && refresh;
+  // refresh is intentionally NOT sandbox-blocked (Patch 1 of the
+  // post-deploy round): it hydrates the read-only DuckDB cache, which
+  // the UI cannot render anything without. Per-IP rate limit at Caddy
+  // + the per-kind try_start_scan lock bound the abuse vector.
   const otherScanRunning = sandbox && !!activeScan && !state.running;
 
   useEffect(() => {
@@ -678,14 +680,13 @@ function QuickAction({
     ? Math.min(100, (state.step / state.total) * 100)
     : 0;
 
-  // Tooltip surfaces WHY the button is disabled (running self / running
-  // other / sandbox-blocked refresh) so users don't get a silent dead button.
-  const blockReason = sandboxBlocksRefresh
-    ? 'Read-only sandbox — refresh runs nightly via systemd timer'
-    : otherScanRunning
-      ? `Another visitor is running a ${activeScan?.kind ?? 'scan'} — wait ~30s`
-      : null;
-  const disabled = state.running || sandboxBlocksRefresh || otherScanRunning;
+  // Tooltip surfaces WHY the button is disabled (only "another visitor's
+  // scan is running" remains as a non-self disable reason after the
+  // refresh-ungating).
+  const blockReason = otherScanRunning
+    ? `Another visitor is running a ${activeScan?.kind ?? 'scan'} — wait ~30s`
+    : null;
+  const disabled = state.running || otherScanRunning;
   return (
     <button
       type="button"

@@ -15,7 +15,6 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { getHealth, type ScanFrame, streamScan } from '../lib/api';
-import { useSandbox } from '../lib/sandbox';
 import { useByoKeyTrap } from './ByoKeyModal';
 import { LogoM } from './LogoM';
 
@@ -117,12 +116,12 @@ function RefreshMetadataButton() {
   const [step, setStep] = useState(0);
   const [total, setTotal] = useState(0);
   const [label, setLabel] = useState('');
-  // Refresh is a sandbox-gated write endpoint — disable the button entirely
-  // when sandbox=true so the user doesn't waste a click on a guaranteed
-  // 403 sandbox_read_only. Tooltip explains.
-  const sandbox = useSandbox();
-  // Trap any 402 byo_key_required (would only fire if a future, non-write
-  // refresh path is added; harmless in current code).
+  // Refresh hydrates the read-only DuckDB cache (read from OM, write to
+  // in-process memory) — intentionally NOT sandbox-blocked since the UI
+  // cannot render anything without it. Per-IP rate limit at the Caddy
+  // edge + the per-kind try_start_scan lock bound the abuse vector.
+  // Trap kept for completeness in case a future LLM-bearing refresh path
+  // is added; harmless in current code (refresh itself doesn't 402).
   const byoKey = useByoKeyTrap();
 
   // Abort if the topbar unmounts (eg. tab close).
@@ -203,13 +202,11 @@ function RefreshMetadataButton() {
     <button
       type="button"
       onClick={() => run.mutate()}
-      disabled={running || sandbox}
+      disabled={running}
       title={
-        sandbox
-          ? 'Read-only sandbox — refresh runs nightly via systemd timer'
-          : running
-            ? `${step}/${total} · ${label}`
-            : 'Pull latest metadata from OpenMetadata'
+        running
+          ? `${step}/${total} · ${label}`
+          : 'Pull latest metadata from OpenMetadata'
       }
       className="text-[12px] px-3 py-1.5 rounded-md text-slate-200 border border-emerald-500/20 bg-emerald-500/5 hover:text-white hover:bg-emerald-500/10 hover:border-emerald-500/30 transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-2 min-w-[170px]"
     >
