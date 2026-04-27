@@ -159,13 +159,15 @@ def ping() -> bool:
 # ── Conversations ─────────────────────────────────────────────────────────────
 
 
-def new_conversation(title: str | None = None) -> str:
-    """Create a new conversation, return its ID."""
+def new_conversation(title: str | None = None, *, session_id: str | None = None) -> str:
+    """Create a new conversation, return its ID. `session_id` tags the row
+    with the visitor's cookie session so /chat/conversations can filter by
+    it under SANDBOX_MODE=1. None outside sandbox."""
     convo_id = str(uuid.uuid4())
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO conversations (id, title) VALUES (?, ?)",
-            (convo_id, title),
+            "INSERT INTO conversations (id, title, session_id) VALUES (?, ?, ?)",
+            (convo_id, title, session_id),
         )
     return convo_id
 
@@ -200,18 +202,69 @@ def delete_conversation(convo_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def list_conversations(limit: int = 50) -> list[dict[str, Any]]:
-    """Most recent conversations first."""
-    rows = (
-        get_conn()
-        .execute(
-            "SELECT id, title, created_at, updated_at FROM conversations "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
+def list_conversations(
+    limit: int = 50, *, session_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Most recent conversations first.
+
+    `session_id`: when provided, returns only rows tagged with that session
+    (sandbox isolation). When None, returns rows regardless of session_id —
+    used by non-sandbox installs where every visitor sees the full list."""
+    if session_id is not None:
+        rows = (
+            get_conn()
+            .execute(
+                "SELECT id, title, created_at, updated_at FROM conversations "
+                "WHERE session_id = ? ORDER BY updated_at DESC LIMIT ?",
+                (session_id, limit),
+            )
+            .fetchall()
         )
-        .fetchall()
-    )
+    else:
+        rows = (
+            get_conn()
+            .execute(
+                "SELECT id, title, created_at, updated_at FROM conversations "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            )
+            .fetchall()
+        )
     return [dict(r) for r in rows]
+
+
+def conversation_visible_to(convo_id: str, *, session_id: str | None) -> bool:
+    """Whether a conversation should be visible to the caller.
+
+    `session_id=None` means "no filter" (non-sandbox mode) — visible iff the
+    row exists. A non-None `session_id` enforces ownership: visible iff a
+    row with that id AND that session_id exists. Pre-sandbox rows (NULL
+    session_id) are invisible to every caller in sandbox mode, which is the
+    correct nightly-reset behaviour per SANDBOX_PHASES.md.
+
+    Called by chat routes that touch a single conversation by id — both
+    the dedicated CRUD routes (GET / PATCH / DELETE /chat/conversations/{id})
+    and the `chat_stream` route's pre-stream history-load guard. Returning
+    False maps to 404 in the route to avoid leaking the existence of
+    someone else's conversation. The store-level mutators
+    (`rename_conversation`, `delete_conversation`, `append_exchange`) do
+    not self-check — visibility is enforced at the route boundary."""
+    if session_id is None:
+        row = (
+            get_conn()
+            .execute("SELECT 1 FROM conversations WHERE id = ? LIMIT 1", (convo_id,))
+            .fetchone()
+        )
+    else:
+        row = (
+            get_conn()
+            .execute(
+                "SELECT 1 FROM conversations WHERE id = ? AND session_id = ? LIMIT 1",
+                (convo_id, session_id),
+            )
+            .fetchone()
+        )
+    return row is not None
 
 
 def get_conversation(convo_id: str) -> dict[str, Any] | None:
@@ -485,6 +538,34 @@ def scan_is_running(kind: str) -> bool:
         .fetchone()
     )
     return row is not None
+
+
+def active_scan() -> dict[str, Any] | None:
+    """Return the single in-flight scan_runs row across all kinds, or None.
+
+    Used by the sandbox React app to disable scan buttons while another
+    visitor is mid-scan — the API is single-worker so concurrent scans of
+    the same kind are blocked, but the UI also wants to surface a "wait
+    ~30s" hint when ANY scan is active. Returns the most-recently-started
+    running row if there's somehow more than one (shouldn't happen given
+    `try_start_scan`'s atomic check, but defensive against race-condition
+    drift)."""
+    row = (
+        get_conn()
+        .execute(
+            "SELECT id, kind, started_at, finished_at, status, counts, error "
+            "FROM scan_runs WHERE status = 'running' "
+            "ORDER BY started_at DESC LIMIT 1"
+        )
+        .fetchone()
+    )
+    if row is None:
+        return None
+    d = dict(row)
+    if d.get("counts"):
+        with contextlib.suppress(json.JSONDecodeError):
+            d["counts"] = json.loads(d["counts"])
+    return d
 
 
 # ── Runtime config (UI-settable overrides) ────────────────────────────────

@@ -39,6 +39,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.api import errors, store
 from app.api.deps import DuckOk, OmOk, WritesEnabled
 from app.api.schemas import (
+    ActiveScanResponse,
     BulkDocRequest,
     ScanRun,
     ScanStatusResponse,
@@ -360,6 +361,15 @@ _TRACKED_KINDS = (
     "dq_recommend",
     "bulk_doc",
 )
+
+
+@router.get("/active", response_model=ActiveScanResponse)
+def active() -> ActiveScanResponse:
+    """The currently-in-flight scan run, or None. Polled by the React app
+    (5s cadence) to disable the per-kind scan buttons while another scan
+    is running. Cheap — single indexed SQLite read, no DuckDB / OM calls."""
+    row = store.active_scan()
+    return ActiveScanResponse(active=ScanRun.model_validate(row) if row else None)
 
 
 @router.get("/status", response_model=ScanStatusResponse)

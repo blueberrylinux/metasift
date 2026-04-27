@@ -268,6 +268,32 @@ class LLMTestResponse(BaseModel):
     error: str | None = None
 
 
+class ValidateKeyRequest(BaseModel):
+    """Body for POST /llm/validate-key. Used by the sandbox BYO-key modal
+    to confirm a user's pasted OpenRouter key before persisting it to
+    localStorage. Cheap — one HTTP call to OpenRouter's /auth/key, no
+    LLM completion."""
+
+    key: str = Field(min_length=1)
+
+    @field_validator("key")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("key must be a non-empty, non-whitespace string")
+        return stripped
+
+
+class ValidateKeyResponse(BaseModel):
+    """Result of POST /llm/validate-key. `ok` False with an `error` string
+    surfaces the OpenRouter rejection reason (rate-limited, invalid key,
+    expired, etc.) so the React app can render an actionable message."""
+
+    ok: bool
+    error: str | None = None
+
+
 # ── /review ───────────────────────────────────────────────────────────────
 
 
@@ -346,6 +372,15 @@ class ScanStatusResponse(BaseModel):
     stable scan-kind identifiers the SSE endpoints start scans under."""
 
     kinds: dict[str, ScanRun | None]
+
+
+class ActiveScanResponse(BaseModel):
+    """The single in-flight scan, or None. The sandbox React app polls this
+    on a 5s cadence to disable scan buttons while another visitor's scan is
+    mid-flight (single-worker API serializes scans of the same kind, but
+    cross-kind concurrency is also UX-disruptive on a shared deployment)."""
+
+    active: ScanRun | None
 
 
 # ── /viz ──────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ rewrites app.main (Streamlit) or app.config — the two run side-by-side.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -108,6 +109,48 @@ async def bind_request_api_key(request: Request, call_next):
     finally:
         if token is not None:
             request_api_key.reset(token)
+
+
+# ── Session cookie middleware ─────────────────────────────────────────────
+#
+# Tag every visitor with a stable UUID4 cookie so /chat/conversations can
+# filter by it under SANDBOX_MODE=1. Outside sandbox the cookie is still
+# set (harmless — single-user installs already have implicit affinity to
+# their own browser), and new conversations get the session_id column
+# populated so a future SANDBOX_MODE=1 flip on the same DB does the right
+# thing.
+#
+# Cookie attrs:
+#   * 30-day Max-Age — long enough for a returning visitor to find their
+#     own past chats; nightly reset of the SQLite store wipes the rows
+#     anyway, so longer doesn't help.
+#   * SameSite=Lax — the React app shares an origin with the API in prod
+#     (Caddy fronts both on the same hostname), so Lax is sufficient.
+#   * HttpOnly=False — frontend doesn't need to read it, but keeping the
+#     option open lets us debug from the browser console without changing
+#     the cookie config later.
+SESSION_COOKIE = "metasift_session_id"
+_SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+
+
+@app.middleware("http")
+async def bind_session_cookie(request: Request, call_next):
+    existing = request.cookies.get(SESSION_COOKIE)
+    session_id = existing or str(uuid.uuid4())
+    request.state.session_id = session_id
+    response = await call_next(request)
+    if existing is None:
+        response.set_cookie(
+            SESSION_COOKIE,
+            session_id,
+            max_age=_SESSION_COOKIE_MAX_AGE,
+            samesite="lax",
+            httponly=False,
+            secure=False,  # Caddy terminates TLS in prod; flip to True if API
+            # is ever exposed directly. Local dev (HTTP) needs False.
+        )
+    return response
+
 
 app.include_router(health.router, prefix=PREFIX)
 app.include_router(analysis.router, prefix=PREFIX)

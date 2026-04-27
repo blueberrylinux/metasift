@@ -29,7 +29,7 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from loguru import logger
 from sse_starlette.sse import EventSourceResponse
@@ -279,11 +279,26 @@ def _row_to_summary(row: dict[str, Any]) -> ConversationSummary:
     return ConversationSummary.model_validate(row)
 
 
+def _session_filter(request: Request) -> str | None:
+    """The session_id to filter conversation queries by, or None to disable
+    the filter. Returns None outside sandbox mode so non-sandbox installs
+    keep their existing "every visitor sees every conversation" behaviour
+    (single-user assumption). In sandbox mode, returns the cookie session
+    so each visitor only sees their own chats."""
+    if not api_settings.sandbox_mode:
+        return None
+    return getattr(request.state, "session_id", None)
+
+
 @router.post("/conversations", response_model=ConversationSummary, status_code=201)
-def create_conversation(req: CreateConversationRequest) -> ConversationSummary:
+def create_conversation(
+    req: CreateConversationRequest, request: Request
+) -> ConversationSummary:
     """Start a new conversation. Empty by default — first message comes via
-    /chat/stream with this id."""
-    convo_id = store.new_conversation(title=req.title)
+    /chat/stream with this id. Tagged with the visitor's session_id so the
+    conversation list filter (sandbox) can scope it correctly."""
+    session_id = getattr(request.state, "session_id", None)
+    convo_id = store.new_conversation(title=req.title, session_id=session_id)
     detail = store.get_conversation(convo_id)
     # Race-theoretical: another worker deleted the row between insert and
     # read. Prefer a typed 5xx over `assert` — asserts disappear under
@@ -299,9 +314,10 @@ def create_conversation(req: CreateConversationRequest) -> ConversationSummary:
 
 
 @router.get("/conversations", response_model=ConversationListResponse)
-def list_conversations(limit: int = 50) -> ConversationListResponse:
-    """Most recently updated conversations first. Cheap — no messages joined."""
-    rows = store.list_conversations(limit=limit)
+def list_conversations(request: Request, limit: int = 50) -> ConversationListResponse:
+    """Most recently updated conversations first. Cheap — no messages joined.
+    In sandbox mode, scoped to the caller's session cookie."""
+    rows = store.list_conversations(limit=limit, session_id=_session_filter(request))
     return ConversationListResponse(rows=[_row_to_summary(r) for r in rows])
 
 
@@ -309,10 +325,18 @@ def list_conversations(limit: int = 50) -> ConversationListResponse:
     "/conversations/{conversation_id}",
     response_model=ConversationDetailResponse,
 )
-def get_conversation(conversation_id: str) -> ConversationDetailResponse:
-    """Full transcript for a conversation, tool traces included."""
+def get_conversation(
+    conversation_id: str, request: Request
+) -> ConversationDetailResponse:
+    """Full transcript for a conversation, tool traces included.
+    In sandbox mode, 404s if the conversation belongs to another session."""
+    if not store.conversation_visible_to(
+        conversation_id, session_id=_session_filter(request)
+    ):
+        raise errors.conversation_not_found(conversation_id)
     detail = store.get_conversation(conversation_id)
     if detail is None:
+        # Visibility check passed but the row is gone — race with delete.
         raise errors.conversation_not_found(conversation_id)
     return ConversationDetailResponse(
         conversation=_row_to_summary(detail["conversation"]),
@@ -322,10 +346,17 @@ def get_conversation(conversation_id: str) -> ConversationDetailResponse:
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
 def rename_conversation(
-    conversation_id: str, req: RenameConversationRequest
+    conversation_id: str,
+    req: RenameConversationRequest,
+    request: Request,
 ) -> ConversationSummary:
     """Rename a conversation. An empty / whitespace-only title becomes NULL
-    so the list falls back to the 'Untitled conversation' placeholder."""
+    so the list falls back to the 'Untitled conversation' placeholder.
+    In sandbox mode, 404s if the conversation belongs to another session."""
+    if not store.conversation_visible_to(
+        conversation_id, session_id=_session_filter(request)
+    ):
+        raise errors.conversation_not_found(conversation_id)
     renamed = store.rename_conversation(conversation_id, req.title)
     if not renamed:
         raise errors.conversation_not_found(conversation_id)
@@ -346,9 +377,14 @@ def rename_conversation(
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
-def delete_conversation(conversation_id: str) -> None:
+def delete_conversation(conversation_id: str, request: Request) -> None:
     """Delete a conversation and its messages. 204 on success, 404 if the id
-    was already gone — messages cascade via the FK on `messages.conversation_id`."""
+    was already gone — messages cascade via the FK on `messages.conversation_id`.
+    In sandbox mode, 404s if the conversation belongs to another session."""
+    if not store.conversation_visible_to(
+        conversation_id, session_id=_session_filter(request)
+    ):
+        raise errors.conversation_not_found(conversation_id)
     deleted = store.delete_conversation(conversation_id)
     if not deleted:
         raise errors.conversation_not_found(conversation_id)
@@ -369,7 +405,7 @@ def _history_from_store(convo_id: str) -> list[ChatMessage]:
 
 
 @router.post("/stream")
-async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
+async def chat_stream(req: ChatStreamRequest, request: Request) -> EventSourceResponse:
     """SSE stream of the agent's response to a single user question.
 
     Body: `{question, conversation_id?, history?}`.
@@ -405,6 +441,14 @@ async def chat_stream(req: ChatStreamRequest) -> EventSourceResponse:
     ctx = contextvars.copy_context()
 
     if req.conversation_id is not None:
+        # Sandbox: enforce conversation-ownership before loading history, else
+        # a visitor could read any other visitor's chat by guessing the UUID.
+        # Outside sandbox, _session_filter returns None and the check is a
+        # plain existence test.
+        if not store.conversation_visible_to(
+            req.conversation_id, session_id=_session_filter(request)
+        ):
+            raise errors.conversation_not_found(req.conversation_id)
         history = _history_from_store(req.conversation_id)
     else:
         history = req.history or []

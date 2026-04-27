@@ -45,6 +45,8 @@ from app.api.schemas import (
     SetLLMConfigRequest,
     SetModelRequest,
     TaskModelMap,
+    ValidateKeyRequest,
+    ValidateKeyResponse,
 )
 from app.clients import llm
 from app.clients.llm import TaskType
@@ -347,3 +349,52 @@ def test_connection(req: LLMTestRequest | None = None) -> LLMTestResponse:
         response=str(text).strip()[:200],
         error=None,
     )
+
+
+@router.post("/validate-key", response_model=ValidateKeyResponse)
+def validate_key(req: ValidateKeyRequest) -> ValidateKeyResponse:
+    """Verify a candidate OpenRouter key by hitting their `/auth/key`
+    endpoint. Used by the sandbox BYO-key modal: paste → validate (200 →
+    save to localStorage; 4xx → show OpenRouter's rejection reason).
+
+    Cheap — no LLM completion fired. The response body from OpenRouter
+    is intentionally NOT echoed back: it embeds the key's quota, label,
+    and limit fields, which are private to the visitor and have no UI
+    affordance here. We expose only ok / error.
+
+    Never persists the key server-side. Never logs the key.
+    """
+    base_url = settings.openrouter_base_url or "https://openrouter.ai/api/v1"
+    # OpenRouter exposes /auth/key for "is this key live?" checks. Cheaper
+    # than a chat completion and doesn't burn the user's quota for a
+    # round-trip used purely for validation.
+    url = base_url.rstrip("/") + "/auth/key"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(url, headers={"Authorization": f"Bearer {req.key}"})
+    except httpx.HTTPError as e:
+        # Network-level failure — OpenRouter unreachable, DNS, TLS, etc.
+        # Surface as ok=False with the exception class so the React app
+        # can show "couldn't reach OpenRouter — check your connection"
+        # instead of "your key is invalid".
+        logger.warning(f"validate-key: transport error contacting {url}: {type(e).__name__}")
+        return ValidateKeyResponse(
+            ok=False,
+            error=f"Couldn't reach OpenRouter ({type(e).__name__}). Check your connection.",
+        )
+
+    if r.status_code == 200:
+        return ValidateKeyResponse(ok=True, error=None)
+
+    # Non-200 = key rejected by OpenRouter. Map common cases to actionable
+    # text — fall back to a generic "OpenRouter rejected this key" for
+    # codes we haven't seen so the UI never renders an empty error.
+    if r.status_code == 401:
+        msg = "Invalid OpenRouter key. Get a free one at https://openrouter.ai/keys."
+    elif r.status_code == 402:
+        msg = "Key has no remaining quota. Top up your OpenRouter balance or use a fresh key."
+    elif r.status_code == 429:
+        msg = "OpenRouter rate-limited this validation. Wait a moment and retry."
+    else:
+        msg = f"OpenRouter rejected this key (HTTP {r.status_code})."
+    return ValidateKeyResponse(ok=False, error=msg)
