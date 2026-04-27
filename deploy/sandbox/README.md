@@ -22,10 +22,35 @@
 
 ## Prerequisites
 
-- Hostinger KVM2 VPS (or equivalent: 2 vCPU / 8 GB RAM / ≥40 GB disk + 8 GB swap recommended).
+- Ubuntu 24.04 LTS VPS (Hostinger KVM2 or equivalent: 2 vCPU / 8 GB RAM / ≥40 GB disk + 8 GB swap recommended). The runbook assumes Debian/Ubuntu — `apt`-based.
 - DNS for `metasift.org` you control. The runbook assumes `sandbox.metasift.org` for prod and `sandbox-staging.metasift.org` for Phase 4 staging.
 - Free OpenRouter account (no key needed on the VPS — pure BYOK per locked decision §1; the OpenRouter signup is just for verifying the BYO-key flow during smoke tests).
 - An SSH keypair you'll add to the VPS for the `metasift` user.
+
+### Cloudflare DNS notes (if you're on Cloudflare, not Hostinger DNS)
+
+The Caddyfile + runbook expect Caddy to provision certs via Let's Encrypt's
+HTTP-01 challenge on port 80. Cloudflare's proxy (orange cloud) intercepts
+that traffic at its edge — Caddy's challenge never reaches the origin and
+issuance silently fails. Two paths:
+
+1. **DNS-only (grey cloud) — recommended for v1.** In Cloudflare's DNS
+   panel, set the proxy status of both `sandbox` and `sandbox-staging`
+   records to "DNS only" (grey cloud icon). Caddy handles end-to-end TLS;
+   Cloudflare is just an authoritative resolver. Simplest path, zero
+   plugin churn, no Cloudflare TLS settings to fight with. Trade-off: no
+   DDoS shielding from Cloudflare's edge.
+
+2. **Orange cloud + DNS-01 challenge.** Build Caddy with the
+   `caddy-dns/cloudflare` plugin (xcaddy add `--with github.com/caddy-dns/cloudflare`),
+   create a Cloudflare API token scoped to `Zone:DNS:Edit` on `metasift.org`,
+   set it via the Caddyfile's `tls { dns cloudflare {env.CF_API_TOKEN} }`
+   directive. Lets you keep the proxy + DDoS shielding. Adds a Cloudflare
+   secret to the VPS. Skip for v1, revisit if abuse shows up.
+
+If you go with **(1)**: also turn OFF Cloudflare's "Always Use HTTPS" and
+"Automatic HTTPS Rewrites" for `metasift.org` until Caddy's first cert
+is issued — those rewrites mid-issuance can break the HTTP-01 callback.
 
 ---
 
@@ -36,7 +61,9 @@ SSH in as `root` (or as the cloud-init user with `sudo -i`):
 ```bash
 adduser --system --group --shell /bin/bash --home /opt/metasift metasift
 apt update
-apt install -y docker.io docker-compose-plugin make python3.11-venv git ufw fail2ban curl
+# Note: no python3.X-venv — uv (installed below) auto-fetches Python 3.11
+# from python-build-standalone, no apt package needed.
+apt install -y docker.io docker-compose-plugin make git ufw fail2ban curl
 systemctl enable --now docker
 
 # Firewall — only SSH + HTTP + HTTPS exposed.
@@ -60,13 +87,30 @@ cd /opt && git clone --branch sandbox-mode https://github.com/blueberrylinux/met
 chown -R metasift:metasift /opt/metasift
 ```
 
-Switch to the `metasift` user for the rest:
+Install Node 20 (still as root — the `metasift` user has narrow sudo and
+can't apt-install):
+
+```bash
+# Still as root.
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+node --version   # → v20.x
+```
+
+Switch to the `metasift` user for the rest. uv is installed under
+`~/.local/bin` (no sudo needed) and auto-fetches Python 3.11 — no system
+Python package required:
 
 ```bash
 sudo -iu metasift
 
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# uv install adds itself to PATH via ~/.bashrc; pick it up in this shell:
+. "$HOME/.local/bin/env" 2>/dev/null || export PATH="$HOME/.local/bin:$PATH"
+uv --version
+
 cd /opt/metasift
-make install                       # uv venv + Python deps
+make install                       # uv venv (fetches Python 3.11) + deps
 cd web && npm ci && npm run build  # static React bundle for SERVE_STATIC=1
 exit                               # back to root
 ```
@@ -329,9 +373,10 @@ The same script is also used during first-boot Phase 3.6 — see below.
 
 ## Phase 4 — Staging smoke test
 
-Pre-prod: cut a temporary DNS A record `sandbox-staging.metasift.org →
-<VPS IPv4>`, TTL 300. The Caddyfile already has a staging block — Caddy
-will auto-issue a Let's Encrypt cert for it on first request.
+Pre-prod: in **Cloudflare** DNS, add an A record
+`sandbox-staging.metasift.org → <VPS IPv4>`, proxy status **DNS only
+(grey cloud)**, TTL Auto. The Caddyfile already has a staging block —
+Caddy will auto-issue a Let's Encrypt cert for it on first request.
 
 Run the 13-item checklist in
 [SANDBOX_PHASES.md §4.2](../../SANDBOX_PHASES.md#42-smoke-checklist) in
@@ -361,9 +406,11 @@ staging — public DNS isn't repointed yet.
 
 ## Phase 5 — Production DNS cutover
 
-In Hostinger DNS for `metasift.org`: change the existing `sandbox` A
-record from the Railway IP (placeholder) to the VPS IPv4. TTL stays
-at 300 — propagation is minutes, not hours.
+In **Cloudflare** DNS for `metasift.org`: change the existing `sandbox` A
+record's value from the Railway IP (current placeholder) to the VPS IPv4.
+Keep proxy status set to **DNS only (grey cloud)** — orange cloud breaks
+Caddy's HTTP-01 cert renewal, see prerequisites § "Cloudflare DNS notes".
+TTL: leave at the default Auto (≈300s) — propagation is minutes, not hours.
 
 ```bash
 # Verify on the VPS as Caddy issues the prod cert:
