@@ -386,8 +386,10 @@ export function Settings() {
                       <button
                         key={p.id}
                         onClick={() => selectProvider(p.id)}
+                        disabled={sandbox}
+                        title={sandbox ? 'Read-only sandbox' : undefined}
                         className={
-                          'w-full text-left rounded-xl border p-4 transition ' +
+                          'w-full text-left rounded-xl border p-4 transition disabled:opacity-50 disabled:cursor-not-allowed ' +
                           (active
                             ? 'bg-emerald-500/10 border-emerald-500/40'
                             : 'border-slate-800 bg-slate-900/40 hover:border-slate-700')
@@ -438,7 +440,8 @@ export function Settings() {
                       <select
                         value={model}
                         onChange={(e) => setModel(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none"
+                        disabled={sandbox}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {modelOptions.map((m) => (
                           <option key={m} value={m}>
@@ -488,7 +491,8 @@ export function Settings() {
                           value={apiKey}
                           onChange={(e) => setApiKey(e.target.value)}
                           placeholder={apiKeyPlaceholder || 'paste API key'}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none"
+                          disabled={sandbox}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                       )}
                       <div className="text-[10px] text-slate-600 mt-1 font-mono">
@@ -556,7 +560,8 @@ export function Settings() {
                                 onChange={(e) =>
                                   setRoutes((r) => ({ ...r, [t.key]: e.target.value }))
                                 }
-                                className="bg-slate-950 border border-slate-800 rounded-md px-3 py-1.5 text-[12px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none"
+                                disabled={sandbox}
+                                className="bg-slate-950 border border-slate-800 rounded-md px-3 py-1.5 text-[12px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 {modelOptions.map((m) => (
                                   <option key={m} value={m}>
@@ -581,7 +586,9 @@ export function Settings() {
                         <button
                           type="button"
                           onClick={applyMetasiftDefaults}
-                          className="text-emerald-300 hover:text-emerald-200 underline"
+                          disabled={sandbox}
+                          title={sandbox ? 'Read-only sandbox' : undefined}
+                          className="text-emerald-300 hover:text-emerald-200 underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
                         >
                           Reset to MetaSift defaults
                         </button>
@@ -597,8 +604,9 @@ export function Settings() {
                     <button
                       type="button"
                       onClick={() => runTest.mutate()}
-                      disabled={runTest.isPending}
-                      className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 hover:border-emerald-500/40 text-slate-300 hover:text-emerald-300 transition disabled:opacity-50"
+                      disabled={runTest.isPending || sandbox}
+                      title={sandbox ? 'Read-only sandbox' : undefined}
+                      className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 hover:border-emerald-500/40 text-slate-300 hover:text-emerald-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {runTest.isPending ? 'Running…' : 'Run test'}
                     </button>
@@ -785,7 +793,8 @@ function OMConnectionPanel() {
               setHost(e.target.value);
               setHostDirty(true);
             }}
-            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none"
+            disabled={sandbox}
+            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </FormField>
         <FormField label="JWT token">
@@ -796,7 +805,8 @@ function OMConnectionPanel() {
               onChange={(e) => setJwt(e.target.value)}
               placeholder={data.has_token ? '•••••••• (token configured)' : 'Paste ingestion-bot JWT'}
               autoComplete="off"
-              className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 pr-16 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none"
+              disabled={sandbox}
+              className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 pr-16 text-[13px] text-slate-200 font-mono focus:border-emerald-500/40 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <button
               type="button"

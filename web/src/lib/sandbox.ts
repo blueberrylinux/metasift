@@ -13,9 +13,13 @@ import { useQuery } from '@tanstack/react-query';
 import { getActiveScan, getHealth, type ScanRun } from './api';
 
 export function useSandbox(): boolean {
-  // Mirrors TopBar.tsx's queryKey + interval so React Query coalesces the
-  // two consumers onto a single fetch. Don't change either side without
-  // updating the other.
+  // Shares the `['health']` cache with TopBar's useQuery on the same key,
+  // so no extra network fetch fires — React Query coalesces by queryKey.
+  // The 30s refetchInterval matches TopBar; staleTime intentionally
+  // shorter (10s) so a freshly-flipped sandbox flag propagates to the
+  // banner / modal gates faster than to the topbar's status dot. Both
+  // values are still bounded by the 30s polling, so this only affects
+  // refetches triggered by other consumers within the window.
   const q = useQuery({
     queryKey: ['health'],
     queryFn: getHealth,

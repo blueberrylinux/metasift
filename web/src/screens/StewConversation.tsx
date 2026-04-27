@@ -199,12 +199,23 @@ export function StewConversation() {
         // AbortError is expected when the user navigates away — swallow it
         // so useMutation doesn't flash an error state for an intentional cancel.
         if (e instanceof DOMException && e.name === 'AbortError') return;
-        // Sandbox: a 402 byo_key_required opens the BYO-key modal. Swallow
-        // the error and clear the in-flight bubble so the user can retry
-        // their question after pasting a key. Non-sandbox: trap returns
-        // false and the original throw path runs.
+        // Sandbox: a 402 byo_key_required opens the BYO-key modal. Don't
+        // clear inFlight — the user's typed question is the only signal
+        // they have of what they sent (Composer cleared on submit). Mark
+        // the bubble as errored with a friendly hint so they can re-send
+        // verbatim after pasting a key. Non-sandbox: trap returns false
+        // and the original throw path runs.
         if (byoKey.trap(e)) {
-          setInFlight(null);
+          setInFlight((cur) =>
+            cur
+              ? {
+                  ...cur,
+                  error:
+                    'Paste your free OpenRouter key to send this — we do not share LLM credits in the sandbox. Re-send the same question after saving.',
+                  done: true,
+                }
+              : cur,
+          );
           return;
         }
         throw e;

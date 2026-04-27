@@ -95,10 +95,11 @@ export function setStoredOpenRouterKey(key: string): void {
   try {
     localStorage.setItem(BYO_KEY_STORAGE, key);
   } catch {
-    // Storage unavailable — the key still applies in-memory for this tab
-    // via byoKeyHeaders() reading getStoredOpenRouterKey directly each call.
-    // A hard failure here would block the user with no recovery; better to
-    // silently degrade and re-prompt next session.
+    // Storage unavailable (Safari private mode, sandboxed iframe, etc.).
+    // The key is genuinely lost on this failure path — there is no
+    // in-memory fallback. The next chat request will 402 again and the
+    // user will see the BYO-key modal a second time. A hard failure here
+    // would block the user with no recovery; better to silently degrade.
   }
 }
 
