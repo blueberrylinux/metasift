@@ -112,12 +112,18 @@ services:
       AUTHORIZER_PRINCIPAL_DOMAIN: openmetadata.org
     healthcheck:
       # bash /dev/tcp probe: opens a TCP connection to the OM admin port
-      # and exits 0 if the kernel accepts it. The OM server image is built
-      # on OpenJDK + Debian and ships bash but NOT curl; the previous
-      # `curl -f http://localhost:8586/healthcheck` test silently failed
-      # forever (exit 127, command-not-found), leaving the container
-      # marked `unhealthy` while OM was actually running fine.
-      # /dev/tcp is a bash builtin, no external binary needed.
+      # and exits 0 if the kernel accepts it. The OM server image
+      # (docker.getcollate.io/openmetadata/server:1.9.4) is built on
+      # `alpine:3` + `apk add bash openjdk21-jre` (per OpenMetadata's
+      # docker-compose-quickstart Dockerfile) — bash is present, but
+      # curl and wget are NOT. The previous `curl -f .../healthcheck`
+      # test silently failed forever (exit 127, command-not-found),
+      # leaving the container marked `unhealthy` while OM was actually
+      # running fine.
+      #
+      # CMD-array form (not CMD-SHELL) because /bin/sh on Alpine is
+      # busybox ash, which doesn't support /dev/tcp — we have to
+      # invoke bash explicitly.
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8586"]
       interval: 30s
       timeout: 10s

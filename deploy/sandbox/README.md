@@ -374,11 +374,20 @@ sudo journalctl -u metasift-om.service -f
 #
 # OPTION A (recommended — no SSH tunnel needed). Hit OM's API directly
 # from the VPS, log in as the seeded admin user, then read the
-# ingestion-bot's auth mechanism (which contains its JWT). One-liner:
+# ingestion-bot's auth mechanism (which contains its JWT).
+#
+# IMPORTANT: OM's /users/login expects the password BASE64-ENCODED
+# (server-side does Base64.getDecoder().decode(password) — see OM's
+# UserResource.java). Sending plain "admin" fails strict base64 parsing
+# and the call 401s. Compute it explicitly per call so a future
+# admin-password rotation is one variable change:
+#
+#   ADMIN_PASS_B64=$(printf 'admin' | base64)
 #
 #   ADMIN_JWT=$(curl -s -X POST http://127.0.0.1:8585/api/v1/users/login \
 #     -H "Content-Type: application/json" \
-#     -d '{"email":"admin@openmetadata.org","password":"admin"}' | jq -r .accessToken)
+#     -d "{\"email\":\"admin@openmetadata.org\",\"password\":\"$ADMIN_PASS_B64\"}" \
+#     | jq -r .accessToken)
 #
 #   BOT_USER_ID=$(curl -s "http://127.0.0.1:8585/api/v1/bots/name/ingestion-bot" \
 #     -H "Authorization: Bearer $ADMIN_JWT" | jq -r .botUser.id)
