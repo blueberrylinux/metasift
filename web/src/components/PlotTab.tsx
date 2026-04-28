@@ -103,7 +103,11 @@ function PlotlyTab({ slug, caption }: { slug: string; caption: string }) {
           data={fig.data as Plotly.Data[]}
           layout={applyTheme(fig.layout as Partial<Plotly.Layout>)}
           useResizeHandler
-          style={{ width: '100%', height: '560px' }}
+          // 560px on desktop, but cap to viewport height on mobile so the
+          // chart isn't taller than the phone screen. clamp() solves both
+          // ends: floor 320px (a 4:3 chart still readable), ceiling 560px
+          // (matches the original desktop sizing).
+          style={{ width: '100%', height: 'clamp(320px, 55vh, 560px)' }}
           config={{
             displaylogo: false,
             responsive: true,

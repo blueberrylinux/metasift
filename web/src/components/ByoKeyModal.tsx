@@ -120,7 +120,7 @@ function ByoKeyModal({ onClose }: { onClose: () => void }) {
         if (e.target === e.currentTarget && !validating) onClose();
       }}
     >
-      <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900/95 shadow-2xl p-6">
+      <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900/95 shadow-2xl p-5 sm:p-6">
         <h2 id="byo-key-modal-title" className="text-lg font-semibold text-white mb-2">
           Bring your own OpenRouter key
         </h2>
@@ -157,7 +157,7 @@ function ByoKeyModal({ onClose }: { onClose: () => void }) {
         {error && (
           <div className="mt-3 text-[12px] text-red-300 font-mono">⚠ {error}</div>
         )}
-        <div className="mt-5 flex items-center justify-between gap-3">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
           <a
             href="https://openrouter.ai/keys"
             target="_blank"

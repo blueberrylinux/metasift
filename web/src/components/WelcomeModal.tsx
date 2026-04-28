@@ -162,7 +162,7 @@ export function WelcomeModal({ onClose }: Props) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="welcome-title"
-      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-8 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 md:p-8 overflow-y-auto"
       onClick={onClose}
     >
       <div
@@ -172,20 +172,25 @@ export function WelcomeModal({ onClose }: Props) {
         <div className="absolute inset-0 grid-bg opacity-30 pointer-events-none" />
 
         {/* Header */}
-        <div className="relative px-8 pt-8 pb-6 border-b border-slate-800 flex items-start justify-between">
-          <div className="flex items-start gap-5">
-            <LogoM size={64} />
-            <div>
+        <div className="relative px-5 pt-5 pb-4 md:px-8 md:pt-8 md:pb-6 border-b border-slate-800 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 md:gap-5 min-w-0">
+            <div className="hidden sm:block shrink-0">
+              <LogoM size={64} />
+            </div>
+            <div className="sm:hidden shrink-0">
+              <LogoM size={44} />
+            </div>
+            <div className="min-w-0">
               <div className="text-[10px] uppercase tracking-wider text-cyan-400 font-semibold">
                 Welcome to
               </div>
               <h2
                 id="welcome-title"
-                className="text-3xl font-bold text-white tracking-tight leading-tight"
+                className="text-2xl md:text-3xl font-bold text-white tracking-tight leading-tight"
               >
                 MetaSift
               </h2>
-              <p className="text-[13px] text-slate-400 mt-1 max-w-xl">
+              <p className="text-[12px] md:text-[13px] text-slate-400 mt-1 max-w-xl">
                 An <span className="text-emerald-300">AI metadata analyst &amp; steward</span> for
                 OpenMetadata. Documentation coverage is a lie — a catalog can be 100% documented
                 and still full of wrong, stale, or conflicting metadata. MetaSift introduces a{' '}
@@ -197,14 +202,14 @@ export function WelcomeModal({ onClose }: Props) {
           <button
             onClick={onClose}
             aria-label="Close welcome modal"
-            className="w-8 h-8 rounded-md bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700"
+            className="w-8 h-8 shrink-0 rounded-md bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700"
           >
             ✕
           </button>
         </div>
 
         {health.data?.sandbox && (
-          <div className="relative mx-8 mt-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <div className="relative mx-5 md:mx-8 mt-5 md:mt-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
             <div className="flex items-center gap-2 mb-2">
               <div className="text-[11px] uppercase tracking-wider text-amber-400 font-semibold">
                 You&apos;re on the public sandbox
@@ -226,7 +231,7 @@ export function WelcomeModal({ onClose }: Props) {
           </div>
         )}
 
-        <div className="relative p-8 grid grid-cols-1 md:grid-cols-5 gap-6">
+        <div className="relative p-5 md:p-8 grid grid-cols-1 md:grid-cols-5 gap-6">
           {/* Features */}
           <div className="md:col-span-3 space-y-3">
             <div className="text-[11px] uppercase tracking-wider text-emerald-400 font-semibold mb-1">
@@ -301,8 +306,8 @@ export function WelcomeModal({ onClose }: Props) {
             users can see whether OM + LLM are actually reachable before they
             try a suggested question. While the probe is in flight we show
             "Checking…" with a neutral gray dot. */}
-        <div className="relative px-8 pb-6 flex items-center justify-between border-t border-slate-800 pt-5 bg-slate-950/40">
-          <div className="flex items-center gap-4 text-[11px] text-slate-500">
+        <div className="relative px-5 md:px-8 pb-5 md:pb-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-5 bg-slate-950/40">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-slate-500">
             <StatusDot
               loading={health.isLoading}
               ok={health.data?.om ?? false}

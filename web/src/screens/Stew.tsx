@@ -179,7 +179,7 @@ function RecentConversations({
   // the rest of the layout stays pinned.
   const scrolls = rows.length > 4;
   return (
-    <div className="border-t border-slate-800/80 bg-slate-950/40 px-6 py-3">
+    <div className="border-t border-slate-800/80 bg-slate-950/40 px-4 md:px-6 py-3">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-baseline justify-between mb-2">
           <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">

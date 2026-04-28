@@ -336,7 +336,7 @@ export function Settings() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto scrollbar-thin p-8">
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-4 md:p-8">
         {sandbox && (
           <div className="mb-6 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[12px] text-amber-200/90">
             <div className="font-semibold uppercase tracking-wider text-amber-300 mb-1">

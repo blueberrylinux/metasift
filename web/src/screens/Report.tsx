@@ -98,7 +98,7 @@ export function Report() {
         rightButtons={actions}
       />
 
-      <div className="flex-1 px-6 py-6 max-w-4xl print-target">
+      <div className="flex-1 px-4 md:px-6 py-6 max-w-4xl print-target">
         {q.isLoading ? (
           <ReportSkeleton />
         ) : q.error instanceof ApiError && q.error.code === 'no_metadata_loaded' ? (

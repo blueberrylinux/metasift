@@ -87,7 +87,7 @@ export function DataSources() {
         rightButtons={actions}
       />
 
-      <div className="flex-1 px-6 py-6 max-w-5xl">
+      <div className="flex-1 px-4 md:px-6 py-6 max-w-5xl">
         {q.isLoading ? (
           <SourcesSkeleton />
         ) : q.error instanceof ApiError && q.error.code === 'no_metadata_loaded' ? (

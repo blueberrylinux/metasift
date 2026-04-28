@@ -103,7 +103,7 @@ export function Composer({
   };
 
   return (
-    <div className="border-t border-slate-800/80 bg-slate-950/80 backdrop-blur px-8 py-5">
+    <div className="border-t border-slate-800/80 bg-slate-950/80 backdrop-blur px-4 md:px-8 py-4 md:py-5">
       <div className="max-w-3xl mx-auto">
         <div className="focus-ring rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition">
           <div className="flex items-end gap-2 p-2">

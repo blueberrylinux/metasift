@@ -116,7 +116,7 @@ export function ModelQuickPicker() {
       ) : null}
 
       {open && (
-        <div className="absolute bottom-full left-0 mb-2 w-[320px] rounded-lg bg-slate-950 border border-slate-800 shadow-2xl overflow-hidden z-40">
+        <div className="absolute bottom-full left-0 mb-2 w-[min(320px,calc(100vw-2rem))] rounded-lg bg-slate-950 border border-slate-800 shadow-2xl overflow-hidden z-40">
           <div className="px-3 py-2 border-b border-slate-800">
             <input
               autoFocus

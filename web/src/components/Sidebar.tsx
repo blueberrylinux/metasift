@@ -13,7 +13,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -37,6 +37,13 @@ import { ScoreRing } from './ScoreRing';
 import { Skeleton, SkeletonRing } from './Skeleton';
 
 export type NavKey = 'chat' | 'review' | 'sources' | 'viz' | 'dq' | 'report' | 'llm';
+
+// Lets nav rows / scan triggers nested deep in the sidebar dismiss the
+// mobile drawer on click without prop-drilling. Desktop renders pass a
+// no-op close — there's no drawer to dismiss.
+const SidebarUiContext = createContext<{ closeMobile: () => void }>({
+  closeMobile: () => {},
+});
 
 // Layout switcher — three live paths so we can A/B-compare without losing
 // the previous shapes. Flip to 'flat' or 'grouped' to revert. Remove the
@@ -159,7 +166,15 @@ const QUICK_ACTIONS: {
   { kind: 'dq_recommend', icon: '💡', label: 'Recommend DQ tests', sub: 'One LLM call per table' },
 ];
 
-export function Sidebar({ activeKey }: { activeKey: NavKey }) {
+export function Sidebar({
+  activeKey,
+  mobileOpen = false,
+  onMobileClose,
+}: {
+  activeKey: NavKey;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}) {
   const composite = useQuery({
     queryKey: ['composite'],
     queryFn: getComposite,
@@ -177,37 +192,132 @@ export function Sidebar({ activeKey }: { activeKey: NavKey }) {
     retry: false,
   });
 
+  const closeMobile = onMobileClose ?? (() => {});
+
+  // Tracks `(min-width: 768px)` — the same breakpoint Tailwind's `md:`
+  // resolves to. Used purely so we can gate aria-hidden on viewport: at
+  // <md the off-canvas drawer is genuinely hidden when closed and should
+  // be aria-hidden, but at md+ the same DOM node renders as a permanent
+  // sidebar column and must remain announced to screen readers.
+  const isDesktop = useIsMdUp();
+
+  // Mobile: fixed off-canvas drawer below the TopBar (top-14 → bottom-0),
+  // slides in via translate-x. Desktop (md+): static sticky inline column,
+  // identical to the pre-drawer layout. The two modes share one element so
+  // state, scroll position, and queries don't fork between viewports.
+  const asideClass = [
+    'border-r border-slate-800/80 bg-slate-950/60 flex flex-col',
+    // Mobile drawer
+    'fixed top-14 bottom-0 left-0 z-40 w-[85vw] max-w-[320px]',
+    'transition-transform duration-200 ease-out',
+    mobileOpen ? 'translate-x-0' : '-translate-x-full',
+    // Desktop inline column — overrides the mobile fixed positioning.
+    'md:sticky md:bottom-auto md:z-auto md:translate-x-0',
+    'md:w-[280px] md:max-w-none md:shrink-0 md:h-[calc(100vh-3.5rem)]',
+  ].join(' ');
+
   return (
-    <aside className="w-[280px] shrink-0 border-r border-slate-800/80 bg-slate-950/60 flex flex-col h-[calc(100vh-3.5rem)] sticky top-14">
-      {composite.isLoading ? (
-        <HealthHeroSkeleton />
-      ) : composite.error || !composite.data ? (
-        <HealthHeroError error={composite.error} />
-      ) : (
-        <HealthHero composite={composite.data} />
-      )}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto scrollbar-thin">
-        <SectionLabel>Workspace</SectionLabel>
-        <div className="space-y-1">
-          <WorkspaceNav activeKey={activeKey} pendingCount={pending.data?.rows.length} />
-        </div>
-
-        {SIDEBAR_NAV_LAYOUT !== 'restructured' && (
-          <div className="mt-6">
-            <SectionLabel>Quick actions</SectionLabel>
-            <div className="space-y-1">
-              {QUICK_ACTIONS.map((a) => (
-                <QuickAction key={a.kind} {...a} />
-              ))}
-            </div>
-          </div>
+    <SidebarUiContext.Provider value={{ closeMobile }}>
+      <aside
+        className={asideClass}
+        aria-label="Primary navigation"
+        // Mobile: aria-hide the off-canvas drawer when closed so screen
+        // readers don't announce its contents while it's translated off-
+        // screen. Desktop: never aria-hidden — the same DOM node renders
+        // as a permanent sidebar column at md:+ and must stay announced.
+        aria-hidden={!isDesktop && !mobileOpen}
+      >
+        {composite.isLoading ? (
+          <HealthHeroSkeleton />
+        ) : composite.error || !composite.data ? (
+          <HealthHeroError error={composite.error} />
+        ) : (
+          <HealthHero composite={composite.data} />
         )}
-      </nav>
+        <nav className="flex-1 px-3 py-4 overflow-y-auto scrollbar-thin">
+          <SectionLabel>Workspace</SectionLabel>
+          <div className="space-y-1">
+            <WorkspaceNav activeKey={activeKey} pendingCount={pending.data?.rows.length} />
+          </div>
 
-      <StatusFooter health={health.data} />
-    </aside>
+          {SIDEBAR_NAV_LAYOUT !== 'restructured' && (
+            <div className="mt-6">
+              <SectionLabel>Quick actions</SectionLabel>
+              <div className="space-y-1">
+                {QUICK_ACTIONS.map((a) => (
+                  <QuickAction key={a.kind} {...a} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Mobile-only mirror of the TopBar's right-side actions. On
+              desktop these live in the TopBar; on mobile the TopBar hides
+              them (no room) so the drawer is the only surface that
+              exposes them. md:hidden keeps the desktop sidebar unchanged. */}
+          {SIDEBAR_NAV_LAYOUT === 'restructured' && (
+            <div className="md:hidden mt-6">
+              <SectionLabel>More</SectionLabel>
+              <div className="space-y-1">
+                {MOBILE_EXTRA_NAV.map((item) => (
+                  <NavLeafRow
+                    key={item.key}
+                    item={item}
+                    active={item.key === activeKey}
+                  />
+                ))}
+                <QuickAction
+                  kind="refresh"
+                  icon="↻"
+                  label="Refresh metadata"
+                  sub="Pull from OpenMetadata"
+                />
+              </div>
+            </div>
+          )}
+        </nav>
+
+        <StatusFooter health={health.data} />
+      </aside>
+    </SidebarUiContext.Provider>
   );
 }
+
+// matchMedia('(min-width: 768px)') in a hook — returns true on md+ where
+// Tailwind's `md:` classes apply. Used by the sidebar to gate aria-hidden
+// on viewport (the same element is an off-canvas drawer below md and a
+// permanent column above; only the drawer state should ever aria-hide it).
+//
+// SSR-safe initial value: when window is undefined, default to desktop so
+// the first paint matches the larger-viewport DOM expectations. Vite's
+// CSR-only setup never actually hits this branch but the guard keeps it
+// from blowing up if anyone introduces SSR.
+function useIsMdUp(): boolean {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(min-width: 768px)').matches;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches);
+    mq.addEventListener('change', onChange);
+    // Sync once in case the value changed between initial useState and effect
+    // (e.g. browser zoom on mount).
+    setMatches(mq.matches);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return matches;
+}
+
+// Desktop hosts these in the TopBar (LLM setup / Executive report / Data
+// sources). Mobile hides the TopBar's expanded button row, so the drawer
+// re-exposes them as nav leaves at the bottom.
+const MOBILE_EXTRA_NAV: NavLeaf[] = [
+  { kind: 'leaf', key: 'sources', label: 'Data sources', desc: 'Connected services', to: '/data-sources', icon: 'sources' },
+  { kind: 'leaf', key: 'report', label: 'Executive report', desc: 'Markdown export', to: '/report', icon: 'doc' },
+  { kind: 'leaf', key: 'llm', label: 'LLM setup', desc: 'Provider · model · keys', to: '/settings', icon: 'llm' },
+];
 
 // ── Health hero ────────────────────────────────────────────────────────────
 
@@ -418,6 +528,7 @@ function NavLeafRow({
   active: boolean;
   badge?: number;
 }) {
+  const { closeMobile } = useContext(SidebarUiContext);
   const base =
     'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg transition group border';
   const activeCls = 'bg-emerald-500/10 border-emerald-500/20';
@@ -426,6 +537,7 @@ function NavLeafRow({
   return (
     <Link
       to={item.to}
+      onClick={closeMobile}
       className={`${base} ${active ? activeCls : idleCls}`}
     >
       <div

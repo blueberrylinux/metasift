@@ -138,7 +138,11 @@ export function DQFailuresVizTable() {
           rows={q.data.rows as unknown[]}
         />
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
+      {/* Desktop (md+): wide native table. Below md: a card stack —
+          the 1700px minWidth would force horizontal page-scroll on
+          phones, and side-scrolling between an FQN cell and a long
+          rationale is unreadable in practice. */}
+      <div className="hidden md:block overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
           className="w-full border-collapse table-fixed"
           style={{ minWidth: 1700 }}
@@ -175,6 +179,42 @@ export function DQFailuresVizTable() {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="md:hidden space-y-2">
+        {q.data.rows.map((r) => (
+          <DQFailureCard key={r.test_id} row={r} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DQFailureCard({ row }: { row: DQFailure }) {
+  const ex = row.explanation;
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 space-y-2">
+      <CopyableFQN fqn={row.table_fqn} variant="short" className="font-mono text-[12px] text-slate-200" />
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono text-slate-400">
+        {row.column_name && <span>col: {row.column_name}</span>}
+        {row.test_definition_name && <span>def: {row.test_definition_name}</span>}
+      </div>
+      <CardField label="Failure">{row.result_message || '—'}</CardField>
+      <CardField label="Summary">{ex?.summary || <Pending />}</CardField>
+      <CardField label="Likely cause">{ex?.likely_cause || <Pending />}</CardField>
+      <CardField label="Fix type">{ex?.fix_type ? <FixTypeChip kind={ex.fix_type} /> : <Pending />}</CardField>
+      <CardField label="Suggested fix">{ex?.next_step || <Pending />}</CardField>
+    </div>
+  );
+}
+
+function CardField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-0.5">
+        {label}
+      </div>
+      <div className="text-[12px] leading-relaxed text-slate-200 break-words">
+        {children}
       </div>
     </div>
   );
@@ -310,7 +350,7 @@ export function DQGapsVizTable() {
           rows={q.data.rows as unknown[]}
         />
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
+      <div className="hidden md:block overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 max-h-[calc(100vh-340px)]">
         <table
           className="w-full border-collapse table-fixed"
           style={{ minWidth: 1200 }}
@@ -342,6 +382,43 @@ export function DQGapsVizTable() {
           </tbody>
         </table>
       </div>
+      <div className="md:hidden space-y-2">
+        {q.data.rows.map((r, i) => (
+          <DQGapCard
+            key={`${r.table_fqn}:${r.column_name || ''}:${r.test_definition}:${i}`}
+            row={r}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DQGapCard({ row }: { row: DQRecommendation }) {
+  const params =
+    row.parameters && row.parameters.length > 0
+      ? row.parameters.map((p) => `${p.name ?? ''}=${p.value ?? ''}`).join(', ')
+      : '—';
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <CopyableFQN fqn={row.table_fqn} variant="short" className="font-mono text-[12px] text-slate-200" />
+        <span
+          className={
+            'text-[10px] font-mono px-2 py-0.5 rounded border whitespace-nowrap inline-block shrink-0 ' +
+            (SEVERITY_TONE[row.severity] ?? 'bg-slate-800 text-slate-300 border-slate-700')
+          }
+        >
+          {row.severity}
+        </span>
+      </div>
+      <div className="text-[11px] font-mono text-slate-400">
+        {row.column_name ? `col: ${row.column_name}` : '(table-level)'} · {row.test_definition}
+      </div>
+      <CardField label="Parameters">
+        <span className="font-mono text-[11px] text-slate-400 break-all">{params}</span>
+      </CardField>
+      <CardField label="Rationale">{row.rationale || '—'}</CardField>
     </div>
   );
 }

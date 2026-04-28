@@ -38,7 +38,7 @@ export function PageHeader({
   backLink?: { to: string; label: ReactNode };
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-slate-800/80">
+    <div className="flex items-start justify-between gap-4 px-4 md:px-6 pt-5 pb-4 border-b border-slate-800/80">
       <div className="section-accent">
         {backLink && (
           <Link

@@ -176,7 +176,7 @@ export function Review() {
       {q.isLoading ? (
         <ReviewSkeleton />
       ) : q.error instanceof ApiError && q.error.code === 'no_metadata_loaded' ? (
-        <div className="p-8">
+        <div className="p-4 md:p-8">
           <EmptyState
             icon="↻"
             title="No metadata loaded yet"
@@ -190,7 +190,7 @@ export function Review() {
           />
         </div>
       ) : q.error ? (
-        <div className="p-8">
+        <div className="p-4 md:p-8">
           <EmptyState
             variant="error"
             icon="⚠"
@@ -199,7 +199,7 @@ export function Review() {
           />
         </div>
       ) : (q.data?.rows.length ?? 0) === 0 ? (
-        <div className="p-8">
+        <div className="p-4 md:p-8">
           <EmptyState
             icon="✓"
             title="No pending suggestions"
@@ -216,7 +216,7 @@ export function Review() {
       ) : (
         <>
           {/* Filter row */}
-          <div className="border-b border-slate-800/80 px-6 py-2 flex items-center gap-1 flex-wrap">
+          <div className="border-b border-slate-800/80 px-4 md:px-6 py-2 flex items-center gap-1 flex-wrap">
             <FilterChip
               label="All"
               n={counts.all}
@@ -246,9 +246,12 @@ export function Review() {
             </div>
           </div>
 
-          {/* Split: list + diff */}
-          <div className="flex-1 flex overflow-hidden min-h-0">
-            <div className="w-[420px] shrink-0 border-r border-slate-800/80 overflow-y-auto scrollbar-thin">
+          {/* Split: list + diff. Mobile (<lg): stack vertically — list on
+              top, diff below. The 420px list panel doesn't fit on a phone
+              and side-by-side leaves no room for the diff prose. lg+:
+              original two-column layout. */}
+          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+            <div className="w-full lg:w-[420px] lg:shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800/80 overflow-y-auto scrollbar-thin max-h-[40vh] lg:max-h-none">
               {visible.map((item) => (
                 <ReviewListRow
                   key={item.key}
@@ -512,7 +515,7 @@ function DiffPanel({
   };
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="p-4 md:p-6 max-w-3xl">
       <div className="flex items-start justify-between mb-6">
         <div>
           <div className="flex items-center gap-2 mb-2">

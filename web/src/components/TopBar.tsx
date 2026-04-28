@@ -22,7 +22,15 @@ import { LogoM } from './LogoM';
 // restore the old Welcome guide / Docs only header.
 const TOPBAR_NAV_BUTTONS: 'classic' | 'expanded' = 'expanded';
 
-export function TopBar({ onOpenWelcome }: { onOpenWelcome?: () => void }) {
+export function TopBar({
+  onOpenWelcome,
+  onToggleSidebar,
+  sidebarOpen = false,
+}: {
+  onOpenWelcome?: () => void;
+  onToggleSidebar?: () => void;
+  sidebarOpen?: boolean;
+}) {
   // Pull live health for the version badge — replaces the hardcoded
   // `openmetadata.local · admin` strip which was wrong as soon as the user
   // pointed at a different OM host. Once JWT-from-UI lands the host can come
@@ -37,19 +45,48 @@ export function TopBar({ onOpenWelcome }: { onOpenWelcome?: () => void }) {
   const omVersion = health.data?.version;
 
   return (
-    <div className="h-14 border-b border-slate-800/80 backdrop-blur-md bg-slate-950/70 flex items-center justify-between px-5 sticky top-0 z-30">
-      <div className="flex items-center gap-3">
+    <div className="h-14 border-b border-slate-800/80 backdrop-blur-md bg-slate-950/70 flex items-center justify-between px-3 md:px-5 sticky top-0 z-30">
+      <div className="flex items-center gap-2 md:gap-3 min-w-0">
+        {/* Hamburger toggles the sidebar drawer on mobile. Hidden at md+
+            where the sidebar is always visible inline. Lives in the
+            TopBar's top-0..top-14 strip; the drawer starts at top-14 so
+            the two regions don't overlap and this stays tappable as the
+            "close" affordance even when the drawer is open. */}
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="md:hidden p-2 -ml-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800/60 transition"
+          aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={sidebarOpen}
+        >
+          {sidebarOpen ? (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="6" y1="18" x2="18" y2="6" />
+            </svg>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          )}
+        </button>
         <LogoM size={44} />
-        <div>
-          <div className="text-[13px] font-bold text-white tracking-tight leading-none">
+        <div className="min-w-0">
+          <div className="text-[13px] font-bold text-white tracking-tight leading-none truncate">
             MetaSift
           </div>
-          <div className="text-[10px] text-slate-500 mt-0.5 leading-none">
+          {/* Tagline takes a second line — hide on the smallest viewports
+              where the topbar is already crowded with the hamburger. */}
+          <div className="text-[10px] text-slate-500 mt-0.5 leading-none hidden sm:block">
             AI metadata analyst &amp; steward
           </div>
         </div>
-        <div className="ml-5 h-5 w-px bg-slate-800" />
-        <div className="flex items-center gap-2 text-[11px] text-slate-400">
+        {/* OM status strip eats horizontal room — hide on small screens.
+            The sidebar's StatusFooter shows the same info. */}
+        <div className="ml-5 h-5 w-px bg-slate-800 hidden md:block" />
+        <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-400">
           <span
             className={
               'w-1.5 h-1.5 rounded-full ' +
@@ -63,29 +100,37 @@ export function TopBar({ onOpenWelcome }: { onOpenWelcome?: () => void }) {
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1 md:gap-2">
+        {/* Refresh + route shortcuts collapse to the sidebar drawer on
+            mobile (mirrored under "More" in Sidebar.tsx). Hiding the
+            entire group keeps the topbar compact enough to fit a 320px
+            viewport. */}
         {TOPBAR_NAV_BUTTONS === 'expanded' && (
-          <>
+          <div className="hidden md:flex items-center gap-2">
             <RefreshMetadataButton />
             <NavLink to="/settings">LLM setup</NavLink>
             <NavLink to="/report">Executive report</NavLink>
             <NavLink to="/data-sources">Data sources</NavLink>
             <div className="h-5 w-px bg-slate-800 mx-1" />
-          </>
+          </div>
         )}
         <button
           onClick={onOpenWelcome}
-          className="text-[11px] px-2.5 py-1 rounded-md text-cyan-300 border border-cyan-500/20 bg-cyan-500/5 hover:bg-cyan-500/10 transition"
+          className="text-[11px] px-2 md:px-2.5 py-1 rounded-md text-cyan-300 border border-cyan-500/20 bg-cyan-500/5 hover:bg-cyan-500/10 transition"
+          aria-label="Open welcome guide"
         >
-          ⓘ Welcome guide
+          <span className="hidden sm:inline">ⓘ Welcome guide</span>
+          <span className="sm:hidden" aria-hidden>ⓘ</span>
         </button>
         <a
           href="https://github.com/blueberrylinux/metasift"
           target="_blank"
           rel="noreferrer"
-          className="text-[11px] px-2.5 py-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800/60 transition"
+          className="text-[11px] px-2 md:px-2.5 py-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800/60 transition"
+          aria-label="Documentation on GitHub"
         >
-          Docs
+          <span className="hidden sm:inline">Docs</span>
+          <span className="sm:hidden" aria-hidden>↗</span>
         </a>
       </div>
     </div>
