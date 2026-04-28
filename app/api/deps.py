@@ -170,3 +170,25 @@ def require_writes_enabled() -> None:
 # Use as `_: WritesEnabled` in route signatures — name doesn't matter, the
 # dependency runs for its side effect (raising 403).
 WritesEnabled = Annotated[None, Depends(require_writes_enabled)]
+
+
+def require_byo_key_when_sandbox() -> None:
+    """In sandbox mode, raise 402 byo_key_required when the visitor hasn't
+    sent an X-OpenRouter-Key header. Apply via `Depends(...)` on every
+    LLM-bearing endpoint (deep_scan, dq_explain, dq_recommend, bulk_doc) so
+    the React app's BYO-key modal opens via the existing 402 trap, instead
+    of the engine starting, failing on its first LLM call, and emitting a
+    generic "Scan failed" SSE error frame.
+
+    Pre-stream check — must raise BEFORE the SSE response is constructed so
+    the client gets a real HTTP status (you can't change status mid-SSE).
+    No-op outside sandbox mode."""
+    from app.api import errors
+    from app.api.config import api_settings
+    from app.clients.llm import request_api_key
+
+    if api_settings.sandbox_mode and request_api_key.get() is None:
+        raise errors.byo_key_required()
+
+
+ByoKeyOk = Annotated[None, Depends(require_byo_key_when_sandbox)]

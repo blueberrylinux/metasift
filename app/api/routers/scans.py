@@ -37,7 +37,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import errors, store
-from app.api.deps import DuckOk, OmOk
+from app.api.deps import ByoKeyOk, DuckOk, OmOk
 from app.api.schemas import (
     ActiveScanResponse,
     BulkDocRequest,
@@ -249,7 +249,7 @@ def _capture_ctx() -> contextvars.Context:
 
 
 @router.post("/deep-scan")
-async def deep_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
+async def deep_scan(om_ok: OmOk, duck_ok: DuckOk, _byo: ByoKeyOk) -> EventSourceResponse:
     """Stale-description + quality-scoring pass. LLM-heavy — typically 30-60s
     on the demo catalog. Populates cleaning_results."""
     if not om_ok:
@@ -279,7 +279,7 @@ async def pii_scan(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
 
 
 @router.post("/dq-explain")
-async def dq_explain(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
+async def dq_explain(om_ok: OmOk, duck_ok: DuckOk, _byo: ByoKeyOk) -> EventSourceResponse:
     """LLM-written explanations for each failing DQ test. One LLM call per
     failure. Populates dq_explanations."""
     if not om_ok:
@@ -294,7 +294,7 @@ async def dq_explain(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
 
 
 @router.post("/dq-recommend")
-async def dq_recommend(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
+async def dq_recommend(om_ok: OmOk, duck_ok: DuckOk, _byo: ByoKeyOk) -> EventSourceResponse:
     """Per-table recommendations for DQ tests that should exist. One LLM call
     per table. Populates dq_recommendations."""
     if not om_ok:
@@ -309,7 +309,9 @@ async def dq_recommend(om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
 
 
 @router.post("/bulk-doc")
-async def bulk_doc(req: BulkDocRequest, om_ok: OmOk, duck_ok: DuckOk) -> EventSourceResponse:
+async def bulk_doc(
+    req: BulkDocRequest, om_ok: OmOk, duck_ok: DuckOk, _byo: ByoKeyOk
+) -> EventSourceResponse:
     """Auto-document every undocumented table in a schema. Typically agent-
     triggered (`auto-document the sales schema`), exposed here for
     programmatic / UI-driven use. Writes drafts to doc_suggestions."""
